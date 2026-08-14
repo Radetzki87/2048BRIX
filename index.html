@@ -18508,14 +18508,7 @@ All rights reserved.
               document.getElementById("ads1").classList.add("show");
             }
 
-          templst0.forEach((item) => {
-            if(tkey[item]== "1"){
-              if(paidskin.indexOf(skey[item])==-1){
-                paidskin.push(skey[item])
-              }
-            }
-          });
-
+          
 
 
           if(true){
@@ -21002,12 +20995,30 @@ All rights reserved.
 
         }
 
+        var templst0 = ["0","2","4","8","16","32","64","128","256","512","1024","2048"]
+          var tkey = nslst["data1"]
+          var skey = nslst["skin"]
+          templst0.forEach((item) => {
+            if(tkey[item]== "1"){
+              if(paidskin.indexOf(skey[item])==-1){
+                paidskin.push(skey[item])
+              }
+            }
+          });
+          
+         paidskin.push("lofi")
+         paidskin.push("gb")
+         paidskin.push("r808")
+         paidskin.push("hiphop")
+
+        nowidx=0
+
         console.log(nowidx)
-        // document.getElementById("skin-middle").children[1].innerText=paidskin[nowidx];
+        document.getElementById("skin-middle").children[1].innerText=paidskin[nowidx];
 
-        // document.getElementById("skin-middle").children[1].innerText = skinlang[skinset.indexOf(paidskin[nowidx])]
+        document.getElementById("skin-middle").children[1].innerText = skinlang[skinset.indexOf(paidskin[nowidx])]
 
-        // document.getElementById("skin-middle").children[0].src = "png/" +paidskin[nowidx] +".png"
+        document.getElementById("skin-middle").children[0].src = "png/" +paidskin[nowidx] +".png"
 
         bf=99
         skingo(skinset.indexOf(paidskin[nowidx]))
