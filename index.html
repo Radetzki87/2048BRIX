@@ -20941,8 +20941,23 @@ All rights reserved.
       }
 
       function skinshift(n){
+        
+        setlang()
+        var templst0 = ["0","2","4","8","16","32","64","128","256","512","1024","2048"]
+          var tkey = nslst["data1"]
+          var skey = nslst["skin"]
+          templst0.forEach((item) => {
+            if(tkey[item]== "1"){
+              if(paidskin.indexOf(skey[item])==-1){
+                paidskin.push(skey[item])
+              }
+            }
+          });
 
-
+         paidskin.push("lofi")
+         paidskin.push("gb")
+         paidskin.push("r808")
+         paidskin.push("hiphop")
         // var nowidx=paidskin.indexOf(document.getElementById("skin-middle").children[1].innerText);
 
         var nowidx=paidskin.indexOf(skinset[skinnum]);
@@ -20994,24 +21009,9 @@ All rights reserved.
         }else{
 
         }
-        setlang()
-        var templst0 = ["0","2","4","8","16","32","64","128","256","512","1024","2048"]
-          var tkey = nslst["data1"]
-          var skey = nslst["skin"]
-          templst0.forEach((item) => {
-            if(tkey[item]== "1"){
-              if(paidskin.indexOf(skey[item])==-1){
-                paidskin.push(skey[item])
-              }
-            }
-          });
+        
 
-         paidskin.push("lofi")
-         paidskin.push("gb")
-         paidskin.push("r808")
-         paidskin.push("hiphop")
-
-        // nowidx=0
+        
 
         console.log(nowidx)
         document.getElementById("skin-middle").children[1].innerText=paidskin[nowidx];
