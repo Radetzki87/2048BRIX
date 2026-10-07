@@ -2353,8 +2353,8 @@ body>canvas{touch-action:none;top:0;left:0;width:100%!important;height:100%!impo
 #skinshop{width:100%;box-sizing:border-box;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:0 0 28px;}
 #skinshop .character{box-sizing:border-box;border-width:3px;border-radius:18px;padding:16px 8px;min-width:0;gap:7px;font:clamp(12px,1.5vmin,17px) 'mono',system-ui,sans-serif;}
 #skinshop .charimg{width:min(100%,145px);height:120px;object-fit:contain;margin:0;}
-#gameover-overlay{position:fixed;inset:0;z-index:12;background:#101a2733;}
-#gameover-overlay .gameover-container{width:min(92vw,680px);height:auto;max-height:86dvh;overflow-y:auto;box-sizing:border-box;gap:14px;padding:22px;border-radius:22px;background:#172534ec;border:1px solid #ffffff44;justify-content:flex-start;touch-action:pan-y;}
+#gameover-overlay{position:fixed;inset:0;z-index:12;background:#101a271f;}
+#gameover-overlay .gameover-container{width:min(92vw,680px);height:auto;max-height:86dvh;overflow-y:auto;box-sizing:border-box;gap:14px;padding:22px;border-radius:22px;background:#172534b8;border:1px solid #ffffff44;justify-content:flex-start;touch-action:pan-y;}
 #gameover-overlay .gameinfo1,#gameover-overlay .gameinfo0{position:relative!important;inset:auto!important;width:100%;height:auto;box-sizing:border-box;margin:0;padding:12px;background:#ffffff0d;border-radius:12px;gap:12px;}
 #gameover-overlay .gameinfo1{display:flex;flex-wrap:wrap;min-height:90px;}
 #gameover-overlay .gameinfo1 label{position:static!important;inset:auto!important;transform:none!important;margin:0!important;}
@@ -2701,7 +2701,7 @@ All rights reserved.
 // NORMAL has one authoritative board and five independent floor renderers/bodies.
 const ARCADE_ROUTE=Object.freeze([4,3,2,1,0,1,2,3]);
 const ARCADE_GATE=10;
-const ARCADE_TRANSFER_MS=280;
+const ARCADE_TRANSFER_MS=50;
 const arcadeJourney={board:null,routeIndex:0,progress:0,transfers:0,turn:null,pending:false,transitionMs:0,endReason:'',hudKey:''};
 function arcadePlanMove(board,direction){
   const size=board.length, result=Array.from({length:size},()=>Array(size).fill(0)),moves=[];
@@ -2760,6 +2760,7 @@ function arcadeSyncBoards(sourceIndex){
   bf=99;
 }
 function arcadeClearJourney(){
+  arcadeResetResult();
   Object.assign(arcadeJourney,{board:null,routeIndex:0,progress:0,transfers:0,turn:null,pending:false,transitionMs:0,endReason:'',hudKey:''});
   const panel=document.getElementById('arcade-journey');if(panel)panel.hidden=true;
 }
@@ -2808,6 +2809,7 @@ function arcadeJourneyCommit(){
   arcadeJourneyHUD();
 }
 function arcadeJourneyFrame(delta){
+  if(arcadeHoldingBoard())return 0;
   if(gamemod!==0||!arcadeJourney.transitionMs||restartflag||gameoverflag)return delta;
   arcadeJourney.transitionMs=Math.max(0,arcadeJourney.transitionMs-delta);
   if(!arcadeJourney.transitionMs)arcadeJourneyHUD();
@@ -2824,7 +2826,7 @@ function arcadeNormalForce(value,floor){
 }
 function arcadeJourneyVisuals(){
   if(restartflag)return;
-  const closed=!startflag||gameoverflag||activeFloor===cubes.length;
+  const closed=!startflag||(gameoverflag&&!arcadeHoldingBoard())||activeFloor===cubes.length;
   cubes.forEach((cube,index)=>cube.mesh.children.forEach(part=>{
     const tag=part.userData.skin;
     if(tag==='tile'||tag==='bottom'){
@@ -2839,7 +2841,7 @@ function arcadeJourneyVisuals(){
   }));
 }
 function arcadeJourneyBoardView(){
-  if(gamemod!==0||!startflag||gameoverflag||restartflag)return;
+  if(gamemod!==0||!startflag||(gameoverflag&&!arcadeHoldingBoard())||restartflag)return;
   // Secondary cameras show the playable board alone, without projected mirrors.
   cubes.forEach((cube,index)=>cube.mesh.children.forEach(tile=>{
     if(tile.userData.skin!=='tile')return;
@@ -2866,7 +2868,31 @@ function arcadeJourneyHUD(){
 function arcadeJourneyState(){return {route:ARCADE_ROUTE.map(f=>f+1),progress:arcadeJourney.progress,goal:ARCADE_GATE,nextFloor:ARCADE_ROUTE[(arcadeJourney.routeIndex+1)%ARCADE_ROUTE.length]+1,transfers:arcadeJourney.transfers,transitioning:arcadeJourney.transitionMs>0,endReason:arcadeJourney.endReason};}
 
 // Layout and picking use the same CSS-pixel viewport, independent of render resolution.
-function arcadeShowBoardView(){return topcam&&originflag&&startflag&&!gameoverflag&&!restartflag&&!fullcam;}
+const arcadeResult={pending:false,board:false,remaining:0,lastFrame:0};
+function arcadeHoldingBoard(){return gameoverflag&&arcadeResult.pending&&arcadeResult.board;}
+function arcadeResetResult(){Object.assign(arcadeResult,{pending:false,board:false,remaining:0,lastFrame:0});}
+document.addEventListener('visibilitychange',()=>{if(arcadeResult.pending)arcadeResult.lastFrame=performance.now();});
+function arcadeQueueResult(){
+  const board=cubes[activeFloor]?.mesh.userData.game2048.board;
+  const fallen=!overblock&&cubes.some((cube,i)=>i>3&&cube.mesh.position.y<(gamemod===2?bh*(i-4):bh*4)+bh/5);
+  const hold=!!board&&!fallen&&(fullmax||(gamemod===2&&fulltower))&&!arcadeHasMoves(board);
+  Object.assign(arcadeResult,{pending:true,board:hold,remaining:hold?3000:2000,lastFrame:performance.now()});
+  arcadeResetPointer();
+  if(!hold)topcam=false;
+}
+function arcadeResultFrame(now){
+  if(!arcadeResult.pending)return;
+  const delta=Math.max(0,now-arcadeResult.lastFrame);arcadeResult.lastFrame=now;
+  if(!gameoverflag||restartflag){arcadeResetResult();return;}
+  // Count visible, unpaused time; no delayed callback can leak into a restarted run.
+  if(arcadePaused())return;
+  arcadeResult.remaining=Math.max(0,arcadeResult.remaining-delta);
+  if(arcadeResult.remaining>0){if(arcadeResult.board)bf=99;return;}
+  arcadeResult.pending=false;activeFloor=cubes.length;topcam=false;bf=99;
+  const overlay=document.getElementById('gameover-overlay');
+  overlay.classList.remove('fade','hidden');overlay.classList.add('show');
+}
+function arcadeShowBoardView(){return topcam&&originflag&&startflag&&(!gameoverflag||arcadeHoldingBoard())&&!restartflag&&!fullcam;}
 function arcadeSwipeThreshold(){return Math.max(18,Math.min(44,Math.min(innerWidth,innerHeight)*0.075));}
 function arcadeViewLayout(){
   const w=window.innerWidth,h=window.innerHeight,portrait=w/h<0.9,split=arcadeShowBoardView();
@@ -10466,6 +10492,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
           currentTime=Number.isFinite(currentTime)?currentTime:performance.now();
           let deltaTime=lastTime?Math.max(0,Math.min(50,currentTime-lastTime)):0;
           lastTime=currentTime;
+          arcadeResultFrame(currentTime);
           if(arcadePaused()){arcadeJourneyHUD();arcadePresentationHUD();arcadeWasPaused=true;arcadeResetPointer();return;}
           if(arcadeWasPaused){deltaTime=0;arcadeWasPaused=false;arcadeResumeAudio();arcadeResumeGameMusic();}
 
@@ -13026,11 +13053,7 @@ var mnum=Math.min(2048,num);
 
 
 
-                            topcam = false;
-
-                            document.getElementById("gameover-overlay").classList.remove("fade");
-                            document.getElementById("gameover-overlay").classList.remove("hidden");
-                            document.getElementById("gameover-overlay").classList.add("show");
+                            arcadeQueueResult();
 
                             var temp1=document.querySelectorAll(".gameover");
 
@@ -13651,7 +13674,7 @@ var mnum=Math.min(2048,num);
                               temp0[1].style.display="none"
                             }
                             showinfo(gamemod);
-                            activeFloor = cubes.length;
+                            if(!arcadeHoldingBoard())activeFloor = cubes.length;else bf=99;
 
 
                             if(gamemod==2){
@@ -13693,7 +13716,7 @@ var mnum=Math.min(2048,num);
           }
 
           arcadeJourneyCommit();
-          if(gameoverflag){
+          if(gameoverflag&&!arcadeHoldingBoard()){
             for (var i = 0; i < 5; i++) {
               if(skinset[skinnum]=="classic"){
 
@@ -13715,7 +13738,7 @@ var mnum=Math.min(2048,num);
           });
 
           if (orthoflag && lookcenter&&bf!=activeFloor) {
-              if (!gameoverflag) {
+              if (!gameoverflag||arcadeHoldingBoard()) {
                   if (activeFloor == cubes.length) {
                       camera.position.set(
                           2*(bw * 2 )+ avx,
@@ -14363,7 +14386,7 @@ var mnum=Math.min(2048,num);
 
 
 
-          if(startflag&&deltaTime>0) world.step(1/60,(deltaTime/1000)*ARCADE_PHYSICS_SCALE,5);
+          if(startflag&&deltaTime>0&&!arcadeHoldingBoard()) world.step(1/60,(deltaTime/1000)*ARCADE_PHYSICS_SCALE,5);
 
           if(등장){
             if(gamemod!=2){
@@ -14901,7 +14924,7 @@ var mnum=Math.min(2048,num);
 
                       if (i == activeFloor) {
                         // if(skinset[skinnum]!="classic") cubes[i].mesh.material.opacity = 0.8;
-                          if (!gameoverflag) {
+                          if (!gameoverflag||arcadeHoldingBoard()) {
                               if(gamemod==2){
                                 topViewCamera.position.set(cubes[i].body.position.x, bh *(activeFloor+2-2), cubes[i].body.position.z);
                               }else{
@@ -18709,7 +18732,7 @@ function lboard() { /* Unavailable in the fully unlocked arcade edition. */ }
 
 arcadeInstallInput();
 window.BRIX_ARCADE=Object.freeze({
-  version:'2.1.0', move:arcadeMove, selectFloor:arcadeSelectFloor,
+  version:'2.1.1', move:arcadeMove, selectFloor:arcadeSelectFloor,
   pause:arcadeSetPause,
   getState:()=>({ready:goahead,started:startflag,gameover:gameoverflag,mode:gamemod,floor:activeFloor,floors:cubes.length,score:점수,maxTile:maxnum,skin:skinset[skinnum],skins:paidskin.slice(),tracks:namelst.length,paused:arcadePaused(),journey:gamemod===0?arcadeJourneyState():null,render:renderer.info.memory})
 });
