@@ -2734,7 +2734,7 @@ function arcadeDisposeTile(tile){
 function arcadeCreateMirror(value,r,c){
   const tile=tilemold[0].clone();
   tile.children.slice().forEach(child=>tile.remove(child));
-  tile.material=arcadeTileMaterial({color:getColorForNumber(value)});
+  tile.material=new THREE.MeshLambertMaterial({color:getColorForNumber(value)});
   const number=arcadeNumberText(value);number.material=new THREE.MeshBasicMaterial({color:0xffffff});
   number.scale.x=String(value).length>=3?Math.max(0.22,0.8-(String(value).length-3)/5):1;
   tile.add(number);tile.position.set(-bw/2+tw/2+c*tw,0,-bw/2+tw/2+r*tw);
@@ -2867,88 +2867,6 @@ function arcadeJourneyHUD(){
 }
 function arcadeJourneyState(){return {route:ARCADE_ROUTE.map(f=>f+1),progress:arcadeJourney.progress,goal:ARCADE_GATE,nextFloor:ARCADE_ROUTE[(arcadeJourney.routeIndex+1)%ARCADE_ROUTE.length]+1,transfers:arcadeJourney.transfers,transitioning:arcadeJourney.transitionMs>0,endReason:arcadeJourney.endReason};}
 
-// Arcade 2.2: presentation only. No game state, physics, input or clock writes.
-// Reuse the original two light objects and one material per tile: their UUID
-// construction must not introduce extra calls to the gameplay random stream.
-function arcadeTileMaterial(parameters){
-  return lighton?new THREE.MeshPhongMaterial({...parameters,specular:0x242833,shininess:42}):new THREE.MeshBasicMaterial(parameters);
-}
-function arcadeStudioLight(light){
-  light.color.setHex(0xfff4e5);
-  light.intensity=0.86;
-  light.shadow.bias=-0.00015;
-  light.shadow.normalBias=0.025;
-  const size=resinit<3?1024:2048;
-  light.shadow.mapSize.set(size,size);
-  light.userData.arcadeStudio=true;
-  arcadeFitStudioShadow(light);
-}
-function arcadeFitStudioShadow(light){
-  const count=cubes.length,mode=gamemod;
-  if(light.userData.arcadeFloors===count&&light.userData.arcadeMode===mode)return;
-  light.userData.arcadeFloors=count;light.userData.arcadeMode=mode;
-  const height=bh*Math.max(5,count-(mode===2?3:0));
-  const center=height*0.45,extent=Math.max(bw*2.2,height*0.8);
-  light.position.set(-bw*2.5,center+bh*20,bw*4);
-  light.target.position.set(0,center,0);
-  light.target.updateMatrixWorld();
-  const camera=light.shadow.camera;
-  camera.left=-extent;camera.right=extent;camera.top=extent;camera.bottom=-extent;
-  camera.near=0.5;camera.far=Math.max(200,height*4);
-  camera.updateProjectionMatrix();
-}
-function arcadeBackdropColor(hex,whiteMix){
-  const rgb=typeof hex==='number'?hex:parseInt(String(hex).replace('#',''),16);
-  const base=[(rgb>>>16)&255,(rgb>>>8)&255,rgb&255];
-  // Mix in display space because the result is painted to an sRGB canvas.
-  return `rgb(${base.map((v,i)=>Math.round(v*(1-whiteMix)+[248,247,243][i]*whiteMix)).join(',')})`;
-}
-function arcadePaintBackdrop(canvas,low,high){
-  const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
-  const gradient=ctx.createLinearGradient(0,0,0,h);
-  gradient.addColorStop(0,'#faf9f5');
-  gradient.addColorStop(0.32,arcadeBackdropColor(high,0.74));
-  gradient.addColorStop(0.62,arcadeBackdropColor(low,0.66));
-  gradient.addColorStop(1,arcadeBackdropColor(low,0.55));
-  ctx.fillStyle=gradient;ctx.fillRect(0,0,w,h);
-  const glow=ctx.createRadialGradient(w*0.42,h*0.38,0,w*0.42,h*0.38,w*0.65);
-  glow.addColorStop(0,'rgba(255,255,255,0.24)');glow.addColorStop(1,'rgba(255,255,255,0)');
-  ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);
-}
-function arcadeGraphicsFrame(){
-  for(const light of scene.children)if(light.userData.arcadeStudio)arcadeFitStudioShadow(light);
-  for(const cube of cubes)for(const tile of cube.mesh.children){
-    if(tile.userData.skin!=='tile')continue;
-    const material=tile.material,color=material.color;
-    if(!color)continue;
-    const luminance=color.r*0.2126+color.g*0.7152+color.b*0.0722;
-    // Basic text is independent of lighting and stays legible in both cameras.
-    const ink=luminance>0.23?0x263142:0xfff8e8;
-    for(const number of tile.children){
-      if(!number.geometry||!number.material?.color)continue;
-      if(number.material.color.getHex()!==ink)number.material.color.setHex(ink);
-      number.material.toneMapped=false;
-      const geometry=number.geometry;
-      if(!geometry.boundingBox)geometry.computeBoundingBox();
-      const width=geometry.boundingBox.max.x-geometry.boundingBox.min.x;
-      if(width>0)number.scale.x=Math.min(1,tw*0.77/width);
-    }
-  }
-}
-// The top view is a reading surface. Reuse the main shadow map but suppress its
-// projected tower shadows for this pass, restoring all shared mesh flags after it.
-function arcadeBeginBoardLighting(){
-  const receives=[];
-  for(const cube of cubes)cube.mesh.traverse(node=>{if(node.receiveShadow){receives.push(node);node.receiveShadow=false;}});
-  const autoUpdate=renderer.shadowMap.autoUpdate;
-  renderer.shadowMap.autoUpdate=false;
-  return {receives,autoUpdate};
-}
-function arcadeEndBoardLighting(state){
-  state.receives.forEach(node=>{node.receiveShadow=true;});
-  renderer.shadowMap.autoUpdate=state.autoUpdate;
-}
-
 // Layout and picking use the same CSS-pixel viewport, independent of render resolution.
 const arcadeResult={pending:false,board:false,remaining:0,lastFrame:0};
 function arcadeHoldingBoard(){return gameoverflag&&arcadeResult.pending&&arcadeResult.board;}
@@ -2999,7 +2917,7 @@ function arcadeSetMainViewport(){
   // so the main viewport has no tinted rectangular edge on wider portrait layouts.
   arcadeGroundOriginal=groundmesh.material;arcadeGroundVisible=groundmesh.visible;
   if(shadowon&&lighton){
-    arcadeGroundShadow ||= new THREE.ShadowMaterial({color:0x394351,opacity:0.16,depthWrite:false});
+    arcadeGroundShadow ||= new THREE.ShadowMaterial({color:0x000000,opacity:0.12,depthWrite:false});
     groundmesh.material=arcadeGroundShadow;
   }else groundmesh.visible=false;
   const v=arcadeViewLayout().main;renderer.setViewport(v.x,v.y,v.size,v.size);
@@ -3020,9 +2938,7 @@ function arcadeRenderBoard(){
   renderer.setViewport(v.x,v.y,v.size,v.size);renderer.setScissor(v.x,v.y,v.size,v.size);renderer.setScissorTest(true);
   const background=gradback[0],groundVisible=groundmesh.visible;if(background)background.visible=false;groundmesh.visible=false;
   renderer.autoClear=false;renderer.clearDepth();
-  arcadeJourneyBoardView();
-  const lighting=arcadeBeginBoardLighting();
-  try{renderer.render(scene,topViewCamera);}finally{arcadeEndBoardLighting(lighting);}
+  arcadeJourneyBoardView();renderer.render(scene,topViewCamera);
   renderer.autoClear=true;if(background)background.visible=true;groundmesh.visible=groundVisible;
 }
 let arcadePresentationKey='';
@@ -4562,7 +4478,7 @@ function arcadeResumeGameMusic(){
                   let ntile;
                   if (this.board[position.row][position.col] == 2) {
                       ntile = tilemold[0].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(2)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4570,7 +4486,7 @@ function arcadeResumeGameMusic(){
                       });
                   } else if(this.board[position.row][position.col] == 4) {
                       ntile = tilemold[1].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(4)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4578,7 +4494,7 @@ function arcadeResumeGameMusic(){
                       });
                   } else if(this.board[position.row][position.col] == 8) {
                       ntile = tilemold[2].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(8)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4586,7 +4502,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 16) {
                       ntile = tilemold[3].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(16)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4594,7 +4510,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 32) {
                       ntile = tilemold[4].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(32)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4602,7 +4518,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 64) {
                       ntile = tilemold[5].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(64)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4610,7 +4526,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 128) {
                       ntile = tilemold[6].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(128)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4618,7 +4534,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 256) {
                       ntile = tilemold[7].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(256)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4626,7 +4542,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 512) {
                       ntile = tilemold[8].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(512)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4634,7 +4550,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 1024) {
                       ntile = tilemold[9].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(1024)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4642,7 +4558,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 2048) {
                       ntile = tilemold[10].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(2048)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -5447,8 +5363,6 @@ function arcadeResumeGameMusic(){
       // var shadowMapRenderer = new THREE.WebGLShadowMapRenderer(renderer);
       // shadowMapRenderer.render(scene, dl);
       if (shadowon) renderer.shadowMap.enabled = true;
-      renderer.outputColorSpace=THREE.SRGBColorSpace;
-      renderer.shadowMap.type=THREE.PCFSoftShadowMap;
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
       var world = new CANNON.World();
@@ -5851,7 +5765,7 @@ if(gamemod===2 && [7,8].includes(skinnum))skinnum=0;
                   }
                   txtsetting(function(object) {
                       if (lighton) {
-                          var ambientLight = new THREE.HemisphereLight(0xf1f6ff, 0x776453, 0.36);
+                          var ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
                           scene.add(ambientLight);
                           // const dL=new THREE.DirectionalLight(0xffffff,0.7);
                           // dL.position.set(13,30,18);
@@ -5896,8 +5810,7 @@ if(gamemod===2 && [7,8].includes(skinnum))skinnum=0;
                               }
 
                           }
-                          arcadeStudioLight(dl2);
-                                  scene.add(dl2)
+                          scene.add(dl2)
                       }
                       time0 = performance.now();
                       fps = 0;
@@ -9035,9 +8948,7 @@ function msetting1(callback) { msetting0(callback); }
 
           ctx.fillStyle = grd;
           ctx.fillRect(0, 0, 도화지, 도화지);
-          if(!스크린)arcadePaintBackdrop(canvas,colorlst[colornum][0],colorlst[colornum][1]);
           var img3 = new THREE.CanvasTexture(canvas);
-          img3.colorSpace=THREE.SRGBColorSpace;
           // scene.background = img3;
           var material4 = new THREE.MeshBasicMaterial({
               map: img3,
@@ -10160,7 +10071,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
 
       function createTile(idx, height, size, number = 0, callback) {
           if (lighton) {
-              var material = arcadeTileMaterial({
+              var material = new THREE.MeshLambertMaterial({
                   color: getColorForNumber(number)
               });
           } else {
@@ -10227,10 +10138,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
               // 1024: 0XEFC000,
               // 2048: 0XEFCD00,
           };
-          if(colors[number]!==undefined)return colors[number];
-          // Keep growing powers visually distinct; this changes no tile values.
-          const high=[0x237e99,0x395a99,0x685198,0x9a4776,0xb64f50,0xa56525];
-          return number>4096?high[Math.max(0,Math.floor(Math.log2(number))-13)%high.length]:0x000000;
+          return colors[number] || 0x000000;
       }
 
       let elapsedTime = 0;
@@ -10472,7 +10380,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
                         msetting0(function(object) {
                             txtsetting(function(object) {
                                 if (lighton) {
-                                  var ambientLight = new THREE.HemisphereLight(0xf1f6ff, 0x776453, 0.36);
+                                  var ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
                                   scene.add(ambientLight);
                                   // const dL=new THREE.DirectionalLight(0xffffff,0.7);
                                   // dL.position.set(13,30,18);
@@ -10517,7 +10425,6 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
                                       }
 
                                   }
-                                  arcadeStudioLight(dl2);
                                   scene.add(dl2)
                               }
                                 time0 = performance.now();
@@ -11688,10 +11595,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
                   ctx.fillStyle = grd;
                   ctx.fillRect(0, 0, 도화지, 도화지);
 const background=gradback[0].material;
-if(background.map){
-  if(!스크린)arcadePaintBackdrop(canvas,newcl0,newcl1);
-  background.map.image=canvas;background.map.colorSpace=THREE.SRGBColorSpace;background.map.needsUpdate=true;
-}
+if(background.map){background.map.image=canvas;background.map.needsUpdate=true;}
                   for (var i = 0; i < cubes.length; i++) {
                       cubes[i].mesh.position.set(restartloc[i].x * 1.39 * Math.abs(camera.rotation.x - restartend), ((i) * bh + bh / 2) +(restartloc[i].y) * 1.49 * Math.abs(camera.rotation.x - restartend), restartloc[i].z * 1.39 * Math.abs(camera.rotation.x - restartend))
                       cubes[i].mesh.rotation.set(restartrot[i].x * 1.39 * Math.abs(camera.rotation.x - restartend), restartrot[i].y * 1.39 * Math.abs(camera.rotation.x - restartend), restartrot[i].z * 1.39 * Math.abs(camera.rotation.x - restartend))
@@ -11828,9 +11732,7 @@ if(background.map){
                   grd.addColorStop(1, newcl0);
                   ctx.fillStyle = grd;
                   ctx.fillRect(0, 0, 도화지, 도화지);
-                  if(!스크린)arcadePaintBackdrop(canvas,newcl0,newcl1);
                   var img3 = new THREE.CanvasTexture(canvas);
-                  img3.colorSpace=THREE.SRGBColorSpace;
                   gradback[0].material = new THREE.MeshBasicMaterial({
                       map: img3,
                       transparent: true,
@@ -14661,7 +14563,6 @@ var mnum=Math.min(2048,num);
 
 
           arcadeJourneyVisuals();
-          arcadeGraphicsFrame();
           if (window.innerWidth > window.innerHeight) {
               if (restartflag) {
                   arcadeSetMainViewport();
@@ -18831,7 +18732,7 @@ function lboard() { /* Unavailable in the fully unlocked arcade edition. */ }
 
 arcadeInstallInput();
 window.BRIX_ARCADE=Object.freeze({
-  version:'2.2.0', move:arcadeMove, selectFloor:arcadeSelectFloor,
+  version:'2.1.1', move:arcadeMove, selectFloor:arcadeSelectFloor,
   pause:arcadeSetPause,
   getState:()=>({ready:goahead,started:startflag,gameover:gameoverflag,mode:gamemod,floor:activeFloor,floors:cubes.length,score:점수,maxTile:maxnum,skin:skinset[skinnum],skins:paidskin.slice(),tracks:namelst.length,paused:arcadePaused(),journey:gamemod===0?arcadeJourneyState():null,render:renderer.info.memory})
 });
