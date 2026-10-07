@@ -2378,21 +2378,19 @@ window.addEventListener('unhandledrejection',event=>window.BrixBoot.fail('게임
 </script>
 
 <style>
-#arcade-journey{position:fixed;z-index:8;top:54px;right:max(10px,env(safe-area-inset-right));width:260px;box-sizing:border-box;padding:12px 14px;border:1px solid #ffffff40;border-radius:13px;background:#142532ed;box-shadow:0 5px 20px #0002;color:#fff;font:12px/1.5 'mono',system-ui,sans-serif;pointer-events:none;}
-#arcade-journey[hidden]{display:none;}
-.journey-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-#arcade-floor-label{font-size:14px;letter-spacing:.3px;}
-#arcade-gauge-count{font-variant-numeric:tabular-nums;color:#a7f1e1;white-space:nowrap;}
-#arcade-gauge{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin:9px 0 7px;height:9px;}
+#arcade-journey{position:fixed;z-index:8;top:54px;right:10px;width:190px;box-sizing:border-box;padding:8px 10px;border:1px solid #ffffff40;border-radius:9px;background:#142532ed;box-shadow:0 3px 12px #0002;color:#fff;font:11px/1.4 'mono',system-ui,sans-serif;pointer-events:none;}
+#arcade-journey[hidden],#arcade-start-hint[hidden]{display:none;}
+.journey-heading{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+#arcade-floor-label{font-size:11px;letter-spacing:.1px;white-space:nowrap;}
+#arcade-gauge-count{font-variant-numeric:tabular-nums;color:#a7f1e1;white-space:nowrap;font-size:10px;}
+#arcade-gauge{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;margin:6px 0 0;height:6px;}
 #arcade-gauge i{border-radius:2px;background:#ffffff24;}
 #arcade-gauge i.filled{background:#80e6ce;}
-#arcade-route-note{font-size:10px;color:#c2d7dc;}
+#arcade-route-note{display:none;}
 #arcade-journey.near-transfer{border-color:#80e6ce;}
 #arcade-journey.transferring{border-color:#fff;background:#285a62;}
-@media(max-width:600px){#arcade-journey{top:47px;right:8px;width:202px;padding:9px 10px;}#arcade-floor-label{font-size:12px;}#arcade-route-note{font-size:9px;}#arcade-gauge{gap:3px;}}
-@media(max-height:450px) and (min-width:601px){#arcade-journey{top:49px;width:218px;padding:8px 11px;}}
-@media(max-aspect-ratio:4/7){#arcade-journey{top:47%;right:auto;left:50%;transform:translateX(-50%);width:min(76vw,300px);padding:10px 13px;}#arcade-floor-label{font-size:13px;}}
-@media(prefers-reduced-motion:reduce){#arcade-journey{transition:none;}}
+#arcade-start-hint{position:fixed;bottom:max(16%,60px);left:50%;transform:translateX(-50%);z-index:7;padding:9px 13px;border-radius:8px;background:#142532d9;color:white;font:12px/1.5 'mono',system-ui,sans-serif;text-align:center;max-width:80vw;pointer-events:none;}
+@media(max-width:600px){#arcade-journey{width:184px;padding:7px 9px;}#arcade-start-hint{font-size:11px;}}
 </style>
 
 </head>
@@ -2628,6 +2626,7 @@ All rights reserved.
 <body>
 <div id="arcade-load" role="status" aria-live="polite"><div><strong>2048 BRIX · ARCADE</strong><p id="arcade-load-detail">게임과 스킨을 준비하고 있습니다…<br>Preparing the game and skins…</p><button id="arcade-reload" hidden onclick="location.reload()">새로고침 / Reload</button></div></div>
 <div id="arcade-tools"><span id="arcade-badge">ARCADE · ALL UNLOCKED</span><button id="arcade-help-button" type="button">HELP</button><button id="arcade-fullscreen" type="button">FULLSCREEN</button><button id="arcade-pause" type="button">PAUSE</button></div>
+<div id="arcade-start-hint" hidden></div>
 <div id="arcade-journey" hidden><div class="journey-heading"><strong id="arcade-floor-label"></strong><span id="arcade-gauge-count">0 / 10</span></div><div id="arcade-gauge" role="progressbar" aria-valuemin="0" aria-valuemax="10" aria-valuenow="0"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="arcade-route-note"></div></div>
 <div id="arcade-help" role="note"></div>
 <div id="arcade-paused"><button id="arcade-resume" type="button">▶ 계속 / RESUME</button></div>
@@ -2769,7 +2768,7 @@ function arcadeSeedJourney(){
   if(gamemod!==0){arcadeJourneyHUD();return;}
   const source=cubes[4].mesh.userData.game2048;
   source.spawnTile();source.spawnTile();arcadeJourney.board=source.board;
-  arcadeSyncBoards(4);activeFloor=4;maxnum=Math.max(...source.board.flat());
+  arcadeSyncBoards(4);activeFloor=cubes.length;maxnum=Math.max(...source.board.flat());
   arcadeJourneyHUD();
 }
 function arcadeJourneySettled(game){
@@ -2824,11 +2823,19 @@ function arcadeNormalForce(value,floor){
   return tile*floorScale*lapScale*1.35;
 }
 function arcadeJourneyVisuals(){
-  if(gamemod!==0||!startflag||gameoverflag||restartflag)return;
-  cubes.forEach((cube,index)=>cube.mesh.children.forEach(tile=>{
-    if(tile.userData.skin!=='tile')return;
-    const active=index===activeFloor;
-    tile.traverse(node=>{if(!node.material)return;node.material.visible=true;node.material.opacity=active?1:0.2;node.material.transparent=!active;node.material.alphaTest=0;node.material.depthWrite=active;});
+  if(restartflag)return;
+  const closed=!startflag||gameoverflag||activeFloor===cubes.length;
+  cubes.forEach((cube,index)=>cube.mesh.children.forEach(part=>{
+    const tag=part.userData.skin;
+    if(tag==='tile'||tag==='bottom'){
+      const visible=!closed&&index===activeFloor;
+      // Object visibility prevents later legacy camera/material updates from revealing hidden tiles.
+      part.visible=visible;
+      if(tag==='tile')part.traverse(node=>{if(!node.material)return;node.material.visible=visible;node.material.opacity=1;node.material.transparent=false;node.material.alphaTest=0;node.material.depthWrite=true;});
+    }else if(tag===skinset[skinnum]&&closed){
+      part.visible=true;
+      part.traverse(node=>{if(!node.material)return;for(const material of Array.isArray(node.material)?node.material:[node.material]){material.visible=true;material.opacity=1;material.transparent=false;material.alphaTest=0;material.depthWrite=true;}});
+    }
   }));
 }
 function arcadeJourneyBoardView(){
@@ -2836,12 +2843,13 @@ function arcadeJourneyBoardView(){
   // Secondary cameras show the playable board alone, without projected mirrors.
   cubes.forEach((cube,index)=>cube.mesh.children.forEach(tile=>{
     if(tile.userData.skin!=='tile')return;
+    tile.visible=index===activeFloor;
     tile.traverse(node=>{if(!node.material)return;node.material.visible=index===activeFloor;if(index===activeFloor){node.material.opacity=1;node.material.transparent=false;node.material.alphaTest=0;node.material.depthWrite=true;}});
   }));
 }
 function arcadeJourneyHUD(){
   const panel=document.getElementById('arcade-journey');if(!panel)return;
-  const visible=gamemod===0&&originflag&&!restartflag&&!gameoverflag&&!arcadeOverlayOpen();
+  const visible=gamemod===0&&originflag&&startflag&&!restartflag&&!gameoverflag&&!arcadeOverlayOpen();
   panel.hidden=!visible;if(!visible)return;
   const next=ARCADE_ROUTE[(arcadeJourney.routeIndex+1)%ARCADE_ROUTE.length];
   const floor=ARCADE_ROUTE[arcadeJourney.routeIndex],ko=langnum===1;
@@ -2857,7 +2865,72 @@ function arcadeJourneyHUD(){
 }
 function arcadeJourneyState(){return {route:ARCADE_ROUTE.map(f=>f+1),progress:arcadeJourney.progress,goal:ARCADE_GATE,nextFloor:ARCADE_ROUTE[(arcadeJourney.routeIndex+1)%ARCADE_ROUTE.length]+1,transfers:arcadeJourney.transfers,transitioning:arcadeJourney.transitionMs>0,endReason:arcadeJourney.endReason};}
 
-// 2048 BRIX Arcade 2.0 — browser-only, no accounts, payments or persistent storage.
+// Layout and picking use the same CSS-pixel viewport, independent of render resolution.
+function arcadeShowBoardView(){return topcam&&originflag&&startflag&&!gameoverflag&&!restartflag&&!fullcam;}
+function arcadeSwipeThreshold(){return Math.max(18,Math.min(44,Math.min(innerWidth,innerHeight)*0.075));}
+function arcadeViewLayout(){
+  const w=window.innerWidth,h=window.innerHeight,portrait=w/h<0.9,split=arcadeShowBoardView();
+  const unit=split?(portrait?Math.min(w,h*0.52):Math.min(h,w*0.58)):Math.min(w,h);
+  const side=unit*2.5;
+  const boardSize=portrait?Math.min(w,h*0.46):Math.min(w*0.48,h*0.9);
+  return {portrait,main:{x:portrait?(w-unit)/2:0,y:h-side,size:side},board:{x:portrait?(w-boardSize)/2:w-boardSize,y:0,size:boardSize}};
+}
+let arcadeBackdropScene=null,arcadeBackdropMesh=null;
+let arcadeGroundShadow=null,arcadeGroundOriginal=null,arcadeGroundVisible=true;
+function arcadeSetMainViewport(){
+  const source=gradback[0];
+  if(source){
+    if(!arcadeBackdropScene){arcadeBackdropScene=new THREE.Scene();arcadeBackdropMesh=new THREE.Mesh(source.geometry,source.material);arcadeBackdropScene.add(arcadeBackdropMesh);}
+    arcadeBackdropMesh.geometry=source.geometry;arcadeBackdropMesh.material=source.material;
+    arcadeBackdropMesh.position.copy(source.position);arcadeBackdropMesh.quaternion.copy(source.quaternion);arcadeBackdropMesh.scale.copy(source.scale);
+    renderer.setViewport(0,0,innerWidth,innerHeight);renderer.setScissor(0,0,innerWidth,innerHeight);renderer.setScissorTest(true);
+    renderer.autoClear=true;renderer.render(arcadeBackdropScene,camera);
+    source.visible=false;renderer.autoClear=false;renderer.clearDepth();
+  }
+  // The shared backdrop already supplies the floor color. Draw only the tower shadow,
+  // so the main viewport has no tinted rectangular edge on wider portrait layouts.
+  arcadeGroundOriginal=groundmesh.material;arcadeGroundVisible=groundmesh.visible;
+  if(shadowon&&lighton){
+    arcadeGroundShadow ||= new THREE.ShadowMaterial({color:0x000000,opacity:0.12,depthWrite:false});
+    groundmesh.material=arcadeGroundShadow;
+  }else groundmesh.visible=false;
+  const v=arcadeViewLayout().main;renderer.setViewport(v.x,v.y,v.size,v.size);
+}
+function arcadeFinishMainViewport(){if(gradback[0])gradback[0].visible=true;if(arcadeGroundOriginal)groundmesh.material=arcadeGroundOriginal;groundmesh.visible=arcadeGroundVisible;renderer.autoClear=true;}
+function arcadeTowerHit(event){
+  const point=event.touches[0],rect=renderer.domElement.getBoundingClientRect(),v=arcadeViewLayout().main;
+  const x=(point.clientX-rect.left)*window.innerWidth/rect.width;
+  const y=(point.clientY-rect.top)*window.innerHeight/rect.height;
+  const top=window.innerHeight-v.y-v.size;
+  핑거.x=(x-v.x)/v.size*2-1;핑거.y=1-(y-top)/v.size*2;
+  camera.updateMatrixWorld();cubes.forEach(c=>c.mesh.updateMatrixWorld());
+  raycaster.setFromCamera(핑거,camera);
+  return raycaster.intersectObjects(cubes.map(c=>c.mesh),false).length>0;
+}
+function arcadeRenderBoard(){
+  const v=arcadeViewLayout().board;
+  renderer.setViewport(v.x,v.y,v.size,v.size);renderer.setScissor(v.x,v.y,v.size,v.size);renderer.setScissorTest(true);
+  const background=gradback[0],groundVisible=groundmesh.visible;if(background)background.visible=false;groundmesh.visible=false;
+  renderer.autoClear=false;renderer.clearDepth();
+  arcadeJourneyBoardView();renderer.render(scene,topViewCamera);
+  renderer.autoClear=true;if(background)background.visible=true;groundmesh.visible=groundVisible;
+}
+let arcadePresentationKey='';
+function arcadePresentationHUD(){
+  const layout=arcadeViewLayout(),panel=document.getElementById('arcade-journey');
+  const key=[innerWidth,innerHeight,arcadeShowBoardView(),startflag,gameoverflag,originflag,langnum,restartflag,arcadeOverlayOpen()].join(':');
+  if(key===arcadePresentationKey)return;arcadePresentationKey=key;
+  if(panel){
+    const board=layout.board;
+    panel.style.left=(board.x+board.size/2)+'px';panel.style.right='auto';
+    panel.style.top=Math.max(52,innerHeight-board.size*0.82-58)+'px';
+    panel.style.transform='translateX(-50%)';
+  }
+  const prompt=document.getElementById('arcade-start-hint');
+  if(prompt){prompt.hidden=!(gamemod===0&&originflag&&!startflag&&!restartflag&&!gameoverflag&&!arcadeOverlayOpen());prompt.textContent=langnum===1?'타워를 터치하면 5층에서 시작합니다':'TAP THE TOWER TO START ON FLOOR 5';}
+}
+
+// 2048 BRIX Arcade 2.1 — browser-only, no accounts, payments or persistent storage.
 const ARCADE_PHYSICS_SCALE = 1000 / 850; // Preserve the original game's balance.
 let arcadeProfileInitialized = false;
 let arcadeManualPause = false;
@@ -3103,6 +3176,7 @@ function arcadeInstallInput() {
     if(arcadePaused())return;
     if(key==='r'){arcadeRestart();return;}
     if(key==='enter'||key===' '){arcadeSelectFloor(activeFloor<cubes.length?activeFloor:cubes.length-1);return;}
+    if(gamemod===0&&(/^[0-5]$/.test(key)||(!startflag&&directions[key])))return;
     if(/^[0-5]$/.test(key)){arcadeSelectFloor(key==='0'?cubes.length:Number(key)-1);return;}
     if(directions[key]){if(!startflag || activeFloor===cubes.length)arcadeSelectFloor(cubes.length-1);else arcadeMove(directions[key]);}
   });
@@ -4682,7 +4756,7 @@ function arcadeResumeGameMusic(){
           if(!goahead) return;
           if(gamemod===0&&originflag){
             if(arcadePaused()||arcadeJourney.transitionMs||ftiles.length||gameoverflag)return;
-            if(!startflag)arcadeSelectFloor(4);
+            if(!startflag){if(arcadeTowerHit(event))arcadeSelectFloor(4);arcadeResetPointer();return;}
             lastX=(event.touches[0].clientX/window.innerWidth)*2-1;
             lastY=-(event.touches[0].clientY/window.innerHeight)*2+1;
             dragflag=false;ontouch=true;return;
@@ -4835,13 +4909,13 @@ function arcadeResumeGameMusic(){
 
           var tempidx=99;
         if(window.innerWidth>window.innerHeight){
-          핑거.x = (event.touches[0].clientX / window.innerHeight)* 0.8 - 1;
-          핑거.y = -(event.touches[0].clientY / window.innerHeight)*0.8 + 1;
+          핑거.x = (event.touches[0].clientX-arcadeViewLayout().main.x)/arcadeViewLayout().main.size*2-1;
+          핑거.y = 1-event.touches[0].clientY/arcadeViewLayout().main.size*2;
           lastX = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
           lastY = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
         }else{
-          핑거.x = (event.touches[0].clientX / window.innerWidth)* 0.8 - 1;
-          핑거.y = -(event.touches[0].clientY / window.innerWidth)*0.8 + 1;
+          핑거.x = (event.touches[0].clientX-arcadeViewLayout().main.x)/arcadeViewLayout().main.size*2-1;
+          핑거.y = 1-event.touches[0].clientY/arcadeViewLayout().main.size*2;
           lastX = (event.touches[0].clientX / window.innerWidth) * 2 - 1;
           lastY = -(event.touches[0].clientY / window.innerHeight) * 2 + 1;
 
@@ -5030,7 +5104,7 @@ function arcadeResumeGameMusic(){
 
 
               if (!aniflag) {
-                  if (touchx - lastX > 0.15/(window.innerWidth/window.innerHeight)) {
+                  if (touchx - lastX > 2*arcadeSwipeThreshold()/window.innerWidth) {
                       if (gameoverflag) {
                           ontouch = false
 
@@ -5041,7 +5115,7 @@ function arcadeResumeGameMusic(){
                           arcadeMove("right");
                       }
                       ontouch = false;
-                  } else if (-touchx + lastX > 0.15/(window.innerWidth/window.innerHeight)) {
+                  } else if (-touchx + lastX > 2*arcadeSwipeThreshold()/window.innerWidth) {
                       if (gameoverflag) {
                           ontouch = false
 
@@ -5052,7 +5126,7 @@ function arcadeResumeGameMusic(){
                           arcadeMove("left");
                       }
                       ontouch = false;
-                  } else if (touchy - lastY > 0.3/(window.innerHeight/window.innerWidth)) {
+                  } else if (touchy - lastY > 2*arcadeSwipeThreshold()/window.innerHeight) {
                       if (gameoverflag) {
                           ontouch = false
 
@@ -5063,7 +5137,7 @@ function arcadeResumeGameMusic(){
                           arcadeMove("up");
                       }
                       ontouch = false;
-                  } else if (-touchy + lastY > 0.3/(window.innerHeight/window.innerWidth)) {
+                  } else if (-touchy + lastY > 2*arcadeSwipeThreshold()/window.innerHeight) {
                       if (gameoverflag) {
                           ontouch = false
 
@@ -5715,7 +5789,7 @@ if(gamemod===2 && [7,8].includes(skinnum))skinnum=0;
                       time0 = performance.now();
                       fps = 0;
 
-                      activeFloor = gamemod===0?4:cubes.length;
+                      activeFloor = cubes.length;
                       gameoverflag = false;
 
                       document.getElementById("coin-info").classList.remove("hidden");
@@ -10392,7 +10466,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
           currentTime=Number.isFinite(currentTime)?currentTime:performance.now();
           let deltaTime=lastTime?Math.max(0,Math.min(50,currentTime-lastTime)):0;
           lastTime=currentTime;
-          if(arcadePaused()){arcadeJourneyHUD();arcadeWasPaused=true;arcadeResetPointer();return;}
+          if(arcadePaused()){arcadeJourneyHUD();arcadePresentationHUD();arcadeWasPaused=true;arcadeResetPointer();return;}
           if(arcadeWasPaused){deltaTime=0;arcadeWasPaused=false;arcadeResumeAudio();arcadeResumeGameMusic();}
 
 
@@ -14468,15 +14542,15 @@ var mnum=Math.min(2048,num);
           arcadeJourneyVisuals();
           if (window.innerWidth > window.innerHeight) {
               if (restartflag) {
-                  renderer.setViewport(0, window.innerHeight - window.innerHeight * 2.5, window.innerHeight * 2.5, window.innerHeight * 2.5);
+                  arcadeSetMainViewport();
                   renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
                   renderer.setScissorTest(true);
-                  renderer.render(scene, camera);
+                  renderer.render(scene, camera);arcadeFinishMainViewport();
               } else {
-                  renderer.setViewport(0, window.innerHeight - window.innerHeight * 2.5, window.innerHeight * 2.5, window.innerHeight * 2.5);
+                  arcadeSetMainViewport();
                   renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
                   renderer.setScissorTest(true);
-                  renderer.render(scene, camera);
+                  renderer.render(scene, camera);arcadeFinishMainViewport();
               }
           } else {
               if(fullcam){
@@ -14494,10 +14568,10 @@ var mnum=Math.min(2048,num);
               }
 
             }
-                renderer.setViewport(0, window.innerHeight - window.innerWidth * 2.5, window.innerWidth * 2.5, window.innerWidth * 2.5);
+                arcadeSetMainViewport();
                 renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
                 renderer.setScissorTest(true);
-                renderer.render(scene, camera);
+                renderer.render(scene, camera);arcadeFinishMainViewport();
           }
 
           if (!gameoverflag&&!restartflag) {
@@ -14765,7 +14839,7 @@ var mnum=Math.min(2048,num);
             })
           }
           gradback[0].material.visible = true;
-          if (topcam&&!restartflag) {
+          if (arcadeShowBoardView()) {
             if(particleflag) particles.material.visible=false;
               // groundmesh.material.visible = true;
               if (shadowon) groundmesh.receiveShadow = false
@@ -14912,49 +14986,7 @@ var mnum=Math.min(2048,num);
               item[0].material.visible=false;
           })
 
-          if (topcam&&!restartflag) {
-              if ((window.innerWidth / window.innerHeight) < 4 / 7) {
-                  // if((window.innerWidth / window.innerHeight) > 0.5){
-                  //   var width = window.innerWidth / 1.15;
-                  //   var height = window.innerWidth / 1.15;
-                  //   var width1 = window.innerWidth / 1.15;
-                  //   var height1 = window.innerWidth / 1.15;
-                  // }else{
-                    var width = window.innerWidth / 1;
-                    var height = window.innerWidth / 1;
-                    var width1 = window.innerWidth / 1;
-                    var height1 = window.innerWidth / 1;
-                  // }
-                  if((window.innerWidth / window.innerHeight) > 0.5){
-                    renderer.setViewport(window.innerWidth / 2 - width1 / 2, -(width1 / 10)*1.4-3000 * Math.abs(-isoAngle - camera.rotation.x) - 1500 * Math.abs(Math.PI / 4 - camera.rotation.y), width1, height1);
-                    renderer.setScissor(window.innerWidth / 2 - width1 / 2, -(width1 / 10)*1.4-3000 * Math.abs(-isoAngle - camera.rotation.x) - 1500 * Math.abs(Math.PI / 4 - camera.rotation.y), width1, height1);
-                  }else{
-                    if(gamemod==2){
-                      renderer.setViewport(window.innerWidth / 2 - width / 2, -60-3000 * Math.abs(-isoAngle - camera.rotation.x) - 1500 * Math.abs(Math.PI / 4 - camera.rotation.y), width, height);
-                      renderer.setScissor(window.innerWidth / 2 - width1 / 2, -60-3000 * Math.abs(-isoAngle - camera.rotation.x) - 1500 * Math.abs(Math.PI / 4 - camera.rotation.y), width, height);
-                    }else{
-                      renderer.setViewport(window.innerWidth / 2 - width / 2, 0*-(width / 30)-3000 * Math.abs(-isoAngle - camera.rotation.x) - 1500 * Math.abs(Math.PI / 4 - camera.rotation.y), width, height);
-                      renderer.setScissor(window.innerWidth / 2 - width1 / 2, 0*-(width / 30)-3000 * Math.abs(-isoAngle - camera.rotation.x) - 1500 * Math.abs(Math.PI / 4 - camera.rotation.y), width, height);
-                    }
-
-                  }
-                  renderer.setScissorTest(true);
-                  arcadeJourneyBoardView(); renderer.render(scene, topViewCamera);
-              }
-              // else if ((window.innerWidth / window.innerHeight) > 13 / 8) {
-              //   if(skinset[skinnum]=="classic"){
-              //     var width = window.innerHeight / 1;
-              //     var height = window.innerHeight / 1;
-              //   }else{
-              //     var width = window.innerHeight / 1.1;
-              //     var height = window.innerHeight / 1.1;
-              //   }
-              //     renderer.setViewport(window.innerWidth - height - (window.innerWidth - window.innerHeight) / 8, -3500 * Math.abs(-isoAngle - camera.rotation.x) - 1000 * Math.abs(Math.PI / 4 - camera.rotation.y), width, width);
-              //     renderer.setScissor(window.innerWidth - height - (window.innerWidth - window.innerHeight) / 8, -3500 * Math.abs(-isoAngle - camera.rotation.x) - 1000 * Math.abs(Math.PI / 4 - camera.rotation.y), width, width);
-              //     renderer.setScissorTest(true);
-              //     arcadeJourneyBoardView(); renderer.render(scene, topViewCamera);
-              // }
-          }
+          if(arcadeShowBoardView())arcadeRenderBoard();
           ring[0].children.forEach((item) => {
               item.material.visible = false;
           })
@@ -15091,7 +15123,7 @@ var mnum=Math.min(2048,num);
               renderer.setScissor(-500 * Math.abs(-isoAngle - camera.rotation.x) - 500 * Math.abs(Math.PI / 4 - camera.rotation.y), height * 4.2, width, height);
               renderer.setScissorTest(true);
               // if(Math.abs(restartend-camera.rotation.x)<1){
-              // 	renderer.render(scene, camera);
+              // 	renderer.render(scene, camera);arcadeFinishMainViewport();
               // 	console.log(restartend-camera.rotation.x);
               // }else{
               arcadeJourneyBoardView(); renderer.render(scene, frontalViewCamera);
@@ -15105,7 +15137,7 @@ var mnum=Math.min(2048,num);
               // window.innerHeight / 2-innerWidth / 10
               renderer.setScissorTest(true);
               // if(Math.abs(restartend-camera.rotation.x)<1){
-              // 	renderer.render(scene, camera);
+              // 	renderer.render(scene, camera);arcadeFinishMainViewport();
               // 	console.log(restartend-camera.rotation.x);
               // }else{
               arcadeJourneyBoardView(); renderer.render(scene, sideViewCamera);
@@ -15124,8 +15156,7 @@ var mnum=Math.min(2048,num);
               sload = false;
 
           }
-          if(gamemod===0&&originflag&&!startflag&&!restartflag&&!gameoverflag&&!arcadeOverlayOpen()&&Math.abs(camera.rotation.x+isoAngle)<0.0001)arcadeSelectFloor(4);
-          arcadeJourneyHUD();
+          arcadeJourneyHUD();arcadePresentationHUD();
           bf=activeFloor;
           if (elapsedTime < 3 && !gameoverflag) {
 
@@ -18678,7 +18709,7 @@ function lboard() { /* Unavailable in the fully unlocked arcade edition. */ }
 
 arcadeInstallInput();
 window.BRIX_ARCADE=Object.freeze({
-  version:'2.0.0', move:arcadeMove, selectFloor:arcadeSelectFloor,
+  version:'2.1.0', move:arcadeMove, selectFloor:arcadeSelectFloor,
   pause:arcadeSetPause,
   getState:()=>({ready:goahead,started:startflag,gameover:gameoverflag,mode:gamemod,floor:activeFloor,floors:cubes.length,score:점수,maxTile:maxnum,skin:skinset[skinnum],skins:paidskin.slice(),tracks:namelst.length,paused:arcadePaused(),journey:gamemod===0?arcadeJourneyState():null,render:renderer.info.memory})
 });
