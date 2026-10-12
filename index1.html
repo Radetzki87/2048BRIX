@@ -2368,6 +2368,18 @@ body>canvas{touch-action:none;top:0;left:0;width:100%!important;height:100%!impo
 #gameover-overlay .gameoverbt img{width:32px;height:32px;}
 #arcade-summary{box-sizing:border-box;width:100%;font-size:15px;}
 @media(max-width:600px){#skinshop{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}#skinshop .charimg{height:100px;}#gameover-overlay .gameover-container{padding:16px;gap:10px;}}
+
+/* Original music strip and completion toast, with real fade-out before hiding. */
+#song-info,#pop-info{pointer-events:none!important;transition:none!important;will-change:opacity,transform;}
+#song-info{overflow:hidden;box-sizing:border-box;}
+#songtxt{min-width:0;max-width:75vw;}
+#song-title,#artist-name{overflow-wrap:anywhere;}
+#song-title{font-size:clamp(12px,1.8vmax,24px);}
+#artist-name{font-size:clamp(10px,1.3vmax,18px);}
+#pop-info{left:50%;margin-left:-35vmin;padding:0;width:70vmin;}
+#gameover-overlay.show{animation:arcade-result-fade 100ms ease-out both;}
+@keyframes arcade-result-fade{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){#gameover-overlay.show{animation:none;}#song-info,#pop-info{transform:none!important;}}
 </style>
 <script>
 window.BrixBoot={failed:false,started:false,message:'',fail(message){this.failed=true;this.message=message;const box=document.getElementById('arcade-load');if(!box)return;box.hidden=false;document.getElementById('arcade-load-detail').textContent=message;document.getElementById('arcade-reload').hidden=false;},ready(){if(this.failed)return;this.started=true;clearTimeout(this.timeout);document.getElementById('arcade-load').hidden=true;}};
@@ -2803,9 +2815,7 @@ function arcadeJourneyCommit(){
   activeFloor=ARCADE_ROUTE[arcadeJourney.routeIndex];
   arcadeJourney.transitionMs=ARCADE_TRANSFER_MS;
   aniflag=false;arcadeResetPointer();bf=99;fullguide=0;
-  arcadeStopSounds();arcadeResumeGameMusic();
-  songTitleElement.innerText=sdic[activeFloor].title||'';
-  artistNameElement.innerText=sdic[activeFloor].producer||'';
+  arcadeSwitchFloorMusic(activeFloor);
   arcadeJourneyHUD();
 }
 function arcadeJourneyFrame(delta){
@@ -2868,29 +2878,120 @@ function arcadeJourneyHUD(){
 function arcadeJourneyState(){return {route:ARCADE_ROUTE.map(f=>f+1),progress:arcadeJourney.progress,goal:ARCADE_GATE,nextFloor:ARCADE_ROUTE[(arcadeJourney.routeIndex+1)%ARCADE_ROUTE.length]+1,transfers:arcadeJourney.transfers,transitioning:arcadeJourney.transitionMs>0,endReason:arcadeJourney.endReason};}
 
 // Layout and picking use the same CSS-pixel viewport, independent of render resolution.
-const arcadeResult={pending:false,board:false,remaining:0,lastFrame:0};
-function arcadeHoldingBoard(){return gameoverflag&&arcadeResult.pending&&arcadeResult.board;}
-function arcadeResetResult(){Object.assign(arcadeResult,{pending:false,board:false,remaining:0,lastFrame:0});}
-document.addEventListener('visibilitychange',()=>{if(arcadeResult.pending)arcadeResult.lastFrame=performance.now();});
-function arcadeQueueResult(){
-  const board=cubes[activeFloor]?.mesh.userData.game2048.board;
-  const fallen=!overblock&&cubes.some((cube,i)=>i>3&&cube.mesh.position.y<(gamemod===2?bh*(i-4):bh*4)+bh/5);
-  const hold=!!board&&!fallen&&(fullmax||(gamemod===2&&fulltower))&&!arcadeHasMoves(board);
-  Object.assign(arcadeResult,{pending:true,board:hold,remaining:hold?3000:2000,lastFrame:performance.now()});
-  arcadeResetPointer();
-  if(!hold)topcam=false;
+// Feedback uses visible, unpaused time rather than uncancelled timeout callbacks.
+const arcadeResult={board:false,shown:false};
+const arcadeFeedback={lastFrame:0,song:null,popup:null,musicKey:''};
+function arcadeHoldingBoard(){return gameoverflag&&arcadeResult.board;}
+function arcadeHideFeedback(kind){
+  arcadeFeedback[kind]=null;
+  const element=document.getElementById(kind==='song'?'song-info':'pop-info');
+  element.classList.remove('show','show1','fade','moveleft');element.classList.add('hidden');
+  element.style.opacity='0';element.style.transform='';
 }
-function arcadeResultFrame(now){
-  if(!arcadeResult.pending)return;
-  const delta=Math.max(0,now-arcadeResult.lastFrame);arcadeResult.lastFrame=now;
-  if(!gameoverflag||restartflag){arcadeResetResult();return;}
-  // Count visible, unpaused time; no delayed callback can leak into a restarted run.
-  if(arcadePaused())return;
-  arcadeResult.remaining=Math.max(0,arcadeResult.remaining-delta);
-  if(arcadeResult.remaining>0){if(arcadeResult.board)bf=99;return;}
-  arcadeResult.pending=false;activeFloor=cubes.length;topcam=false;bf=99;
+function arcadeResetResult(){
+  Object.assign(arcadeResult,{board:false,shown:false});
+  for(const cube of cubes)cube.mesh.userData.game2048.arcadeFullFeedback=false;
+  arcadeHideFeedback('song');arcadeHideFeedback('popup');
+  arcadeFeedback.musicKey='';arcadeFeedback.lastFrame=performance.now();
+}
+document.addEventListener('visibilitychange',()=>{arcadeFeedback.lastFrame=performance.now();});
+function arcadePlayCue(index){
+  const sound=soundic[esound[index]];
+  if(!sound||!효과음)return;
+  if(sound.isPlaying)sound.stop();
+  sound.setVolume(0.3);sound.play();
+}
+function arcadeFullFeedback(game,terminal=false){
+  // Preserve the original floor palette + 8 degrees of hue per power of two.
+  const base=hexToHSL(hexToHtmlColor(colorlst0[colornum0][game.index%5]));
+  for(const tile of cubes[game.index].mesh.children){
+    if(tile.userData.skin!=='tile')continue;
+    const value=Number(tile.userData.text);
+    tile.material.color.set(`hsl(${((base.h+Math.log2(value)*8)%360+360)%360}, ${base.s}%, ${base.l}%)`);
+    if(terminal)tile.scale.set(1,gap,1);
+  }
+  if(game.arcadeFullFeedback)return;
+  game.arcadeFullFeedback=true;
+  const bonus=gamemod===0?'':([13,22,29,36].includes(langnum)?'200+':'+200pt');
+  showpop(textdic[25][langset[langnum]],'',bonus,terminal?-1:0);
+}
+function arcadeQueueResult(){
+  if(arcadeResult.shown)return;
+  const game=cubes[activeFloor]?.mesh.userData.game2048;
+  const fallen=!overblock&&cubes.some((cube,i)=>i>3&&cube.mesh.position.y<(gamemod===2?bh*(i-4):bh*4)+bh/5);
+  const hold=!!game&&!fallen&&(fullmax||(gamemod===2&&fulltower))&&!arcadeHasMoves(game.board);
+  Object.assign(arcadeResult,{board:hold,shown:true});
+  if(gamemod===0)arcadeJourney.endReason=hold?'board':'tower';
+  arcadeHideFeedback('song');
+  if(hold){arcadeFullFeedback(game,true);bf=99;}
+  else{arcadeHideFeedback('popup');topcam=false;}
+  arcadeResetPointer();
+  // The original result and end cue start together. Completion/merge cues cannot overlap it.
+  const bgm=sdic[activeFloor]?.[0];
+  for(const [file,sound] of Object.entries(soundic))if(file!==bgm&&sound?.isPlaying)sound.stop();
+  endsound=bgm;
+  soundic[bgm]?.setVolume(배경음?0.15:0);
   const overlay=document.getElementById('gameover-overlay');
   overlay.classList.remove('fade','hidden');overlay.classList.add('show');
+  arcadePlayCue(4);
+}
+function arcadeShowSongInfo(info){
+  const {song,floor}=info;
+  songTitleElement.textContent=song.title||'';artistNameElement.textContent=song.producer||'';
+  const floorColor=colorlst0[colornum0][floor%5];
+  for(let i=1;i<=3;i++)document.getElementById('songback'+i).style.backgroundColor=hexToHtmlColor(colorlst[colornum][i]);
+  document.getElementById('songback4').style.backgroundColor=hexToHtmlColor(floorColor);
+  document.getElementById('songback').style.backgroundColor=송백;
+  songTitleElement.style.color=hexToHtmlColor(floorColor);
+  const color=hexToHSL(hexToHtmlColor(floorColor));
+  artistNameElement.style.color=hslToHex(color.h,color.s*0.9,Math.min(100,color.l*1.1));
+  const playing=document.getElementById('playing');playing.style.color='#eeeeee';playing.style.left='';
+  const element=document.getElementById('song-info');
+  element.classList.remove('hidden','fade','show','show1','moveleft');
+  element.style.left='0px';element.style.zIndex='4';element.style.opacity='0';
+  element.style.transform='';
+  arcadeFeedback.song={age:0,next:null};
+}
+function arcadeSwitchFloorMusic(floor,announce=true){
+  if(!startflag||gameoverflag||restartflag||arcadePaused())return;
+  const song=sdic[floor];if(!song)return;
+  const file=song[0],key=floor+':'+file;
+  for(const other of songlst)if(other!==file&&soundic[other]?.isPlaying)soundic[other].stop();
+  const sound=soundic[file];
+  if(sound){sound.setLoop(true);sound.setVolume(배경음?0.4:0);if(!sound.isPlaying)sound.play();}
+  if(!announce||arcadeFeedback.musicKey===key)return;
+  arcadeFeedback.musicKey=key;fullguide=0;
+  const previous=arcadeFeedback.song,info={song,floor};
+  if(previous){
+    // A second handoff during fade-out replaces the pending title, not its clock.
+    if(!previous.next){previous.exitAge=0;previous.exitOpacity=Number(document.getElementById('song-info').style.opacity)||0;}
+    previous.next=info;
+  }else arcadeShowSongInfo(info);
+}
+function arcadeResultFrame(now){
+  const delta=arcadeFeedback.lastFrame?Math.max(0,now-arcadeFeedback.lastFrame):0;
+  arcadeFeedback.lastFrame=now;
+  if(restartflag){if(arcadeFeedback.song||arcadeFeedback.popup)arcadeResetResult();return;}
+  if(arcadePaused())return;
+  const smooth=value=>{const t=Math.max(0,Math.min(1,value));return t*t*(3-2*t);};
+  for(const kind of ['song','popup']){
+    const state=arcadeFeedback[kind];if(!state)continue;
+    const song=kind==='song',element=document.getElementById(song?'song-info':'pop-info');
+    if(song&&state.next){
+      state.exitAge+=delta;
+      if(state.exitAge>=120){arcadeShowSongInfo(state.next);continue;}
+      element.style.opacity=String(state.exitOpacity*(1-smooth(state.exitAge/120)));
+      continue;
+    }
+    state.age+=delta;
+    // Original music strip: 0.4 s in, fade-out at 2.2 s, gone at 2.5 s.
+    // Completion toast: hold until 2 s, then slide/fade up for 0.4 s.
+    const end=song?2500:2400,fadeIn=song?400:200,fadeOut=song?300:400;
+    if(state.age>=end){arcadeHideFeedback(kind);continue;}
+    const alpha=smooth(Math.min(state.age/fadeIn,(end-state.age)/fadeOut));
+    element.style.opacity=String(alpha*(song?1:0.7));
+    element.style.transform=song?'':state.age<fadeIn?`translateY(${-18*(1-alpha)}px)`:`translateY(${-15*(1-alpha)}vmin)`;
+  }
 }
 function arcadeShowBoardView(){return topcam&&originflag&&startflag&&(!gameoverflag||arcadeHoldingBoard())&&!restartflag&&!fullcam;}
 function arcadeSwipeThreshold(){return Math.max(18,Math.min(44,Math.min(innerWidth,innerHeight)*0.075));}
@@ -2917,7 +3018,7 @@ function arcadeSetMainViewport(){
   // so the main viewport has no tinted rectangular edge on wider portrait layouts.
   arcadeGroundOriginal=groundmesh.material;arcadeGroundVisible=groundmesh.visible;
   if(shadowon&&lighton){
-    arcadeGroundShadow ||= new THREE.ShadowMaterial({color:0x000000,opacity:0.12,depthWrite:false});
+    arcadeGroundShadow ||= new THREE.ShadowMaterial({color:0x394351,opacity:0.16,depthWrite:false});
     groundmesh.material=arcadeGroundShadow;
   }else groundmesh.visible=false;
   const v=arcadeViewLayout().main;renderer.setViewport(v.x,v.y,v.size,v.size);
@@ -2938,7 +3039,8 @@ function arcadeRenderBoard(){
   renderer.setViewport(v.x,v.y,v.size,v.size);renderer.setScissor(v.x,v.y,v.size,v.size);renderer.setScissorTest(true);
   const background=gradback[0],groundVisible=groundmesh.visible;if(background)background.visible=false;groundmesh.visible=false;
   renderer.autoClear=false;renderer.clearDepth();
-  arcadeJourneyBoardView();renderer.render(scene,topViewCamera);
+  arcadeJourneyBoardView();
+  renderer.render(scene,topViewCamera);
   renderer.autoClear=true;if(background)background.visible=true;groundmesh.visible=groundVisible;
 }
 let arcadePresentationKey='';
@@ -3148,7 +3250,7 @@ function arcadeSelectFloor(index) {
   if(!originflag){handleTouchStart(arcadeSyntheticTouch(0,0));return false;}
   if(Math.abs(camera.rotation.x+isoAngle)>0.0001)return false;
   const floor=gamemod===0?4:gamemod===2?cubes.length-1:Math.max(0,Math.min(cubes.length,Number(index)));
-  if(floor===cubes.length){activeFloor=floor;bf=99;return true;}
+  if(floor===cubes.length){activeFloor=floor;bf=99;arcadeSwitchFloorMusic(floor);return true;}
   if(!startflag){
     startflag=true;world.gravity.set(0,중력[gamemod],0);elapsedTime=0;
     textscene.forEach(item=>{item.material.visible=false;item.children.forEach(child=>{if(child.material)child.material.visible=false;});});
@@ -3156,11 +3258,7 @@ function arcadeSelectFloor(index) {
     if(!tutorialflag)document.getElementById('tut-info').style.display='none';
   }
   activeFloor=floor;bf=99;fullguide=0;arcadeResumeAudio();
-  for(const file of songlst)if(soundic[file]?.isPlaying && file!==sdic[floor][0])soundic[file].stop();
-  const sound=soundic[sdic[floor][0]];
-  if(sound && !sound.isPlaying)sound.play();
-  songTitleElement.innerText=sdic[floor].title || '';
-  artistNameElement.innerText=sdic[floor].producer || '';
+  arcadeSwitchFloorMusic(floor);
   return true;
 }
 function arcadeMove(direction) {
@@ -3290,8 +3388,7 @@ function arcadePreviewSong(){
 function arcadeResumeGameMusic(){
   if(!startflag||gameoverflag||restartflag||arcadePaused())return;
   const floor=gamemod===2?cubes.length-1:activeFloor;
-  const sound=soundic[sdic[floor]?.[0]];
-  if(sound&&!sound.isPlaying){sound.setLoop(true);sound.setVolume(배경음?0.4:0);sound.play();}
+  arcadeSwitchFloorMusic(floor,false);
 }
 
       var 레프트=document.getElementById("left")
@@ -3762,7 +3859,7 @@ function arcadeResumeGameMusic(){
       var timebuf = -1;
       var stack = 5;
       var sdic = []
-      var songfade;
+      // Floor music feedback uses arcadeFeedback.song, independent of the play clock.
       var soundic = {};
 
       var colorlst = [
@@ -4648,7 +4745,6 @@ function arcadeResumeGameMusic(){
                       fullguide=1
                       if(gamemod==2){
                         fulltower=true
-                        showpop("",textdic[25][langset[langnum]],"")
                       }
                       fullc++
                       this.fullflag=true;
@@ -4665,22 +4761,7 @@ function arcadeResumeGameMusic(){
 
 
 
-                      if(langnum==13||langnum==22||langnum==29||langnum==36){
-                        showpop(textdic[25][langset[langnum]],"","200+")
-                      }else{
-                        showpop(textdic[25][langset[langnum]],"","+200pt")
-                      }
-
                       점수+=200;
-                      cubes[this.index].mesh.children.forEach((item) => {
-                        if(item.userData["skin"]=="tile"){
-                          var newcl = hexToHSL(hexToHtmlColor(colorlst0[colornum0][this.index%5]))
-                          item.material.color= new THREE.Color('hsl(' + String(newcl["h"]+Math.log2(parseInt(item.userData["text"]))*8) + ', ' + String(newcl["s"]) + '%, ' + String(newcl["l"]) + '%)');
-                          item.children.forEach((text) => {
-                            // text.material.color= new THREE.Color(0xFFFFFF);
-                          });
-                        }
-                      });
                       // gameoverflag=true;
                       if(gamemod<2){
                         var fullall=true;
@@ -4696,6 +4777,7 @@ function arcadeResumeGameMusic(){
 
                         }
                       }
+                      arcadeFullFeedback(this,fullmax||fulltower);
                     }
                   }
               }
@@ -4742,7 +4824,7 @@ function arcadeResumeGameMusic(){
       if(!['up','down','left','right'].includes(direction))return false;
       const plan=arcadePlanMove(this.board,direction);
       if(!plan.changed){
-        if(gamemod===0&&this.board===arcadeJourney.board&&!arcadeHasMoves(this.board)){arcadeJourney.endReason='board';fullmax=true;}
+        if(gamemod===0&&this.board===arcadeJourney.board&&!arcadeHasMoves(this.board)){arcadeJourney.endReason='board';fullmax=true;return false;}
         const sound=soundic[esound[5]];if(sound?.isPlaying)sound.stop();sound?.play();return false;
       }
       for(let r=0;r<this.size;r++)for(let c=0;c<this.size;c++)this.board[r][c]=plan.board[r][c];
@@ -5027,76 +5109,7 @@ function arcadeResumeGameMusic(){
             //     soundic[sdic[activeFloor]["upper"]].stop();
             // }
             // soundic[sdic[activeFloor]["upper"]].play();
-            var thisnum = activeFloor
-            var playable = true
-            for (let i = 0; i < 6; i++) {
-                // if (i == thisnum || sdic[i][0] == sdic[thisnum][0]) continue
-                if (i == thisnum ) continue
-                if (soundic[sdic[i][0]].isPlaying) {
-                    soundic[sdic[i][0]].stop();
-                }
-            }
-            if (!soundic[sdic[thisnum][0]].isPlaying) {
-                fullguide=0
-                songfade=elapsedTime;
-                // console.log(songfade);
-                soundic[sdic[thisnum][0]]?.play();
-                // if(tutstep>1) return;
-                songTitleElement.innerText = sdic[thisnum]["title"];
-                if(langnum==13||langnum==22||langnum==29||langnum==36){
-                  document.getElementById("playing").style.left=String(2+1.1*songTitleElement.innerText.length)+"vmax"
-                }
-                artistNameElement.innerText = sdic[thisnum]["producer"];
-                var songInfo = document.getElementById('song-info');
-                songInfo.classList.add("moveleft");
-                songInfo.style.left="0px"
-                document.querySelector("#song-info").style.zIndex="1"
-
-                document.getElementById('songback1').style.backgroundColor=hexToHtmlColor(colorlst[colornum][1])
-                document.getElementById('songback2').style.backgroundColor=hexToHtmlColor(colorlst[colornum][2])
-                document.getElementById('songback3').style.backgroundColor=hexToHtmlColor(colorlst[colornum][3])
-
-                if(thisnum==5){
-                    document.getElementById('song-title').style.color=hexToHtmlColor(colorlst[colornum][2])
-                    document.getElementById('artist-name').style.color=hexToHtmlColor(colorlst[colornum][1])
-                    document.getElementById('songback4').style.backgroundColor=hexToHtmlColor(colorlst0[colornum0][0])
-                    var newcl = hexToHSL(hexToHtmlColor(colorlst[colornum][0]))
-                    // document.getElementById('songback').style.backgroundColor=hslToHex(newcl.h, newcl.s*0.8, newcl.l*0.35)
-
-                    document.getElementById('songback').style.backgroundColor=송백
-
-                    // document.getElementById('songback').style.opacity="0.35"
-
-                }else{
-                    document.getElementById('songback4').style.backgroundColor=hexToHtmlColor(colorlst0[colornum0][thisnum])
-                    document.getElementById('song-title').style.color=hexToHtmlColor(colorlst0[colornum0][thisnum])
-
-                    var newcl = hexToHSL(hexToHtmlColor(colorlst0[colornum0][thisnum]))
-                    document.getElementById('artist-name').style.color=hslToHex(newcl.h, newcl.s*0.90, newcl.l*1.1)
-                    var newcl = hexToHSL(hexToHtmlColor(colorlst0[colornum0][thisnum]))
-                    // document.getElementById('songback').style.backgroundColor=hslToHex(newcl.h+Math.PI/2, newcl.s, newcl.l*0.35)
-                    document.getElementById('songback').style.backgroundColor=송백
-                    // document.getElementById('songback').style.opacity="0.35"
-
-                }
-
-
-                document.getElementById('playing').style.color="#eeeeee"
-                // document.getElementById('song-dash1').style.color=hexToHtmlColor(colorlst[colornum][3])
-                // document.getElementById('song-dash2').style.color=hexToHtmlColor(colorlst[colornum][3])
-
-                // songInfo.classList.add("hidden");
-                if (songInfo.classList.contains("hidden")) songInfo.classList.remove("hidden");
-                // // songInfo.classList.remove("show1");
-                //
-                //
-                //
-                // if (songInfo.classList.contains("fade")) songInfo.classList.remove("fade");
-                songInfo.classList.add("show1");
-                // songInfo.classList.add("show");
-
-            }
-
+            arcadeSwitchFloorMusic(activeFloor);
 
             dragflag = true;
             return;
@@ -5198,109 +5211,7 @@ function arcadeResumeGameMusic(){
                 bf=99;
 
                   if (true) {
-                      let thisnum = activeFloor
-                      var playable = true
-
-                      switch (thisnum) {
-                        case 0:
-                              if (soundic[sdic[1][0]].isPlaying) {
-                                soundic[sdic[1][0]].stop();
-                              }
-                          break;
-                        case 1:
-                              if (soundic[sdic[0][0]].isPlaying) {
-                                soundic[sdic[0][0]].stop();
-                              }
-                              if (soundic[sdic[2][0]].isPlaying) {
-                                soundic[sdic[2][0]].stop();
-                              }
-                          break;
-                        case 2:
-                              if (soundic[sdic[1][0]].isPlaying) {
-                                soundic[sdic[1][0]].stop();
-                              }
-                              if (soundic[sdic[3][0]].isPlaying) {
-                                soundic[sdic[3][0]].stop();
-                              }
-                          break;
-                        case 3:
-                              if (soundic[sdic[2][0]].isPlaying) {
-                                soundic[sdic[2][0]].stop();
-                              }
-                              if (soundic[sdic[4][0]].isPlaying) {
-                                soundic[sdic[4][0]].stop();
-                              }
-                          break;
-                        case 4:
-                              if (soundic[sdic[3][0]].isPlaying) {
-                                soundic[sdic[3][0]].stop();
-                              }
-                              if (soundic[sdic[5][0]].isPlaying) {
-                                soundic[sdic[5][0]].stop();
-                              }
-                          break;
-                        case 5:
-                              if (soundic[sdic[4][0]].isPlaying) {
-                                soundic[sdic[4][0]].stop();
-                              }
-
-                          break;
-                        default:
-
-                      }
-
-                      if (!soundic[sdic[thisnum][0]].isPlaying) {
-                          fullguide=0
-                          soundic[sdic[thisnum][0]].play();
-
-                          songfade=elapsedTime;
-
-                          songTitleElement.innerText = sdic[thisnum]["title"];
-                          if(langnum==13||langnum==22||langnum==29||langnum==36){
-                            document.getElementById("playing").style.left=String(2+1.1*songTitleElement.innerText.length)+"vmax"
-                          }
-                          artistNameElement.innerText = sdic[thisnum]["producer"];
-                          var songInfo = document.getElementById('song-info');
-                          songInfo.classList.add("moveleft");
-                          songInfo.style.left="0px"
-                          document.querySelector("#song-info").style.zIndex="1"
-
-                          document.getElementById('songback1').style.backgroundColor=hexToHtmlColor(colorlst[colornum][1])
-                          document.getElementById('songback2').style.backgroundColor=hexToHtmlColor(colorlst[colornum][2])
-                          document.getElementById('songback3').style.backgroundColor=hexToHtmlColor(colorlst[colornum][3])
-
-                          if(thisnum==5){
-                              document.getElementById('song-title').style.color=hexToHtmlColor(colorlst[colornum][2])
-                              document.getElementById('artist-name').style.color=hexToHtmlColor(colorlst[colornum][1])
-                              document.getElementById('songback4').style.backgroundColor=hexToHtmlColor(colorlst0[colornum0][0])
-                              var newcl = hexToHSL(hexToHtmlColor(colorlst[colornum][0]))
-                              // document.getElementById('songback').style.backgroundColor=hslToHex(newcl.h, newcl.s*0.8, newcl.l*0.35)
-
-                              document.getElementById('songback').style.backgroundColor=송백
-
-                              // document.getElementById('songback').style.opacity="0.35"
-
-                          }else{
-                              document.getElementById('songback4').style.backgroundColor=hexToHtmlColor(colorlst0[colornum0][thisnum])
-                              document.getElementById('song-title').style.color=hexToHtmlColor(colorlst0[colornum0][thisnum])
-
-                              var newcl = hexToHSL(hexToHtmlColor(colorlst0[colornum0][thisnum]))
-                              document.getElementById('artist-name').style.color=hslToHex(newcl.h, newcl.s*0.90, newcl.l*1.1)
-                              var newcl = hexToHSL(hexToHtmlColor(colorlst0[colornum0][thisnum]))
-                              // document.getElementById('songback').style.backgroundColor=hslToHex(newcl.h+Math.PI/2, newcl.s, newcl.l*0.35)
-                              document.getElementById('songback').style.backgroundColor=송백
-                              // document.getElementById('songback').style.opacity="0.35"
-
-                          }
-
-
-                          document.getElementById('playing').style.color="#eeeeee"
-
-                          if (songInfo.classList.contains("hidden")) songInfo.classList.remove("hidden");
-
-                          songInfo.classList.add("show1");
-
-                      }
+                      arcadeSwitchFloorMusic(activeFloor);
                   }
               }
           }
@@ -5810,7 +5721,7 @@ if(gamemod===2 && [7,8].includes(skinnum))skinnum=0;
                               }
 
                           }
-                          scene.add(dl2)
+                                  scene.add(dl2)
                       }
                       time0 = performance.now();
                       fps = 0;
@@ -9929,6 +9840,7 @@ function msetting1(callback) { msetting0(callback); }
           stackHeight = n;
           cubes.forEach((item) => {
               item.mesh.userData["game2048"].fullflag=false;
+              item.mesh.userData["game2048"].arcadeFullFeedback=false;
               item.mesh.material.visible = false
               item.mesh.material.opacity = 1
               item.mesh.material.transparent = false;
@@ -11257,28 +11169,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
                 })
 
 
-                  for (let i = 0; i < 6; i++) {
-                      if (i == activeFloor) continue
-                      if (soundic[sdic[i][0]]?.isPlaying) {
-                          soundic[sdic[i][0]]?.stop();
-                      }
-                  }
-                  if (!soundic[sdic[activeFloor][0]]?.isPlaying) {
-                      soundic[sdic[activeFloor][0]].play();
-                      songTitleElement.innerText = sdic[activeFloor]["title"];
-                      if(langnum==13||langnum==22||langnum==29||langnum==36){
-                        document.getElementById("playing").style.left=String(2+1.1*songTitleElement.innerText.length)+"vmax"
-                      }
-                      artistNameElement.innerText = sdic[activeFloor]["producer"];
-                      var songInfo = document.getElementById('song-info');
-                      songInfo.classList.add("hidden");
-                      songInfo.classList.remove("hidden");
-                      songInfo.classList.add("show");
-                      setTimeout(function() {
-                          songInfo.classList.remove("show");
-                          songInfo.classList.add("fade");
-                      }, 1000);
-                  }
+                  arcadeSwitchFloorMusic(activeFloor);
                   initflag = false;
                   elapsedTime = 0;
                   포인트.forEach((item) => {
@@ -12720,28 +12611,7 @@ var mnum=Math.min(2048,num);
                 });
 
                 activeFloor=cubes.length-1;
-                if(soundic[sdic[activeFloor-1][0]].isPlaying) soundic[sdic[activeFloor-1][0]].stop();
-                soundic[sdic[activeFloor][0]].play();
-                songTitleElement.innerText = sdic[activeFloor]["title"];
-                if(langnum==13||langnum==22||langnum==29||langnum==36){
-                  document.getElementById("playing").style.left=String(2+1.1*songTitleElement.innerText.length)+"vmax"
-                }
-                artistNameElement.innerText = sdic[activeFloor]["producer"];
-                var songInfo = document.getElementById('song-info');
-                songInfo.classList.add("moveleft");
-                songInfo.style.left="0px"
-                document.querySelector("#song-info").style.zIndex="1"
-
-                document.getElementById('songback1').style.backgroundColor=hexToHtmlColor(colorlst[colornum][1])
-                document.getElementById('songback2').style.backgroundColor=hexToHtmlColor(colorlst[colornum][2])
-                document.getElementById('songback3').style.backgroundColor=hexToHtmlColor(colorlst[colornum][3])
-                document.getElementById('song-title').style.color=hexToHtmlColor(colorlst[colornum][2])
-                document.getElementById('artist-name').style.color=hexToHtmlColor(colorlst[colornum][1])
-                document.getElementById('songback4').style.backgroundColor=hexToHtmlColor(colorlst0[colornum0][0])
-                document.getElementById('playing').style.color="#eeeeee"
-                if (songInfo.classList.contains("hidden")) songInfo.classList.remove("hidden");
-                songInfo.classList.add("show1");
-                songfade=elapsedTime;
+                arcadeSwitchFloorMusic(activeFloor);
 
                 if(cubes.length-3>22){
                   fulltower=true;
@@ -12757,46 +12627,6 @@ var mnum=Math.min(2048,num);
 
           }
 
-
-          if(elapsedTime - songfade > 2.2){
-            if(gamemod<2){
-              if(document.getElementById('song-info').classList.contains("moveleft")){
-                document.getElementById('song-info').classList.remove("moveleft");
-                // document.getElementById('song-info').style.left="170%"
-              }
-
-
-              if(elapsedTime - songfade > 2.5){
-                if(document.getElementById('song-info').classList.contains("show1")){
-                  document.getElementById('song-info').classList.remove("show1");
-                  document.getElementById('song-info').classList.add("hidden");
-                }
-              }
-
-              if(elapsedTime - songfade > 3.3){
-                document.querySelector("#song-info").style.zIndex="0"
-              }
-            }else{
-              if(document.getElementById('song-info').classList.contains("show1")){
-                document.getElementById('song-info').classList.remove("show1");
-                document.getElementById('song-info').classList.add("hidden");
-
-
-              }
-              if(elapsedTime - songfade > 3.3){
-                document.querySelector("#song-info").style.zIndex="0"
-              }
-            }
-
-
-
-
-
-
-            // document.getElementById('song-info').style.opacity=1-0.5*parseInt((elapsedTime - songfade-1.5))
-
-
-          }
 
           if (elapsedTime - atchanged > 0 && elapsedTime - atchanged < 0.1) {
               bounceflag = true;
@@ -13044,15 +12874,6 @@ var mnum=Math.min(2048,num);
                               shiftlock=false
                               document.getElementById("tut-info").style.display="none"
                             }
-                            soundic[esound[4]].play();
-
-                            endsound=sdic[activeFloor][0];
-                            if(배경음){
-                              soundic[endsound]?.setVolume(0.15);
-                            }
-
-
-
                             arcadeQueueResult();
 
                             var temp1=document.querySelectorAll(".gameover");
@@ -13061,7 +12882,7 @@ var mnum=Math.min(2048,num);
                               item.style.opacity=0;
                             });
                             if(gamemod<2){
-                              if(skinset[skinnum]=="skelecton"){
+                              if(skinset[skinnum]=="skelecton"&&cubes[activeFloor]){
                                 cubes[activeFloor].mesh.children.forEach((item) => {
                                   if(item.userData["skin"]=="tile"){
                                     item.material.visible=false;
@@ -13594,11 +13415,7 @@ var mnum=Math.min(2048,num);
                               }
 
                               if(cubes.length-3>bestscore2){
-                                setTimeout(function() {
-                                  soundic[esound[10]].play();
-                                  document.querySelector(".gameinfo0").children[2].innerText=textdic[135][langset[langnum]]
-                                  document.querySelector(".gameinfo0").children[2].style.color="yellow"
-                                }, 1000);
+                                // No persistent-record notification in arcade mode.
 
 
                                 if(true) void 0
@@ -13617,11 +13434,7 @@ var mnum=Math.min(2048,num);
 
                               if(점수>bestscore1){
                                 review1=true;
-                                setTimeout(function() {
-                                  soundic[esound[10]].play();
-                                  document.querySelector(".gameinfo0").children[2].innerText=textdic[135][langset[langnum]]
-                                  document.querySelector(".gameinfo0").children[2].style.color="yellow"
-                                }, 1000);
+                                // No persistent-record notification in arcade mode.
 
                                 if(true) void 0
                                 if(true) setdb([["data", "down", String(점수)]]);
@@ -13639,11 +13452,7 @@ var mnum=Math.min(2048,num);
 
                               if(점수>bestscore){
                                 review1=true;
-                                setTimeout(function() {
-                                  soundic[esound[10]].play();
-                                  document.querySelector(".gameinfo0").children[2].innerText=textdic[135][langset[langnum]]
-                                  document.querySelector(".gameinfo0").children[2].style.color="yellow"
-                                }, 1000);
+                                // No persistent-record notification in arcade mode.
 
                                 if(true) void 0
                                 if(true) setdb([["data", "up", String(점수)]]);
@@ -17167,45 +16976,19 @@ function resol(n) {
           return byteArray;
       }
 
-      function showpop(t1="", t2="", t3="",idx=0){
-        if(스샷) return;
-        var tempval;
-
-
-        if(soundic[esound[idx]].isPlaying){
-          setTimeout(function() {
-            showpop(t1, t2, t3, idx);
-          }, 1000);
-          return;
-        }else{
-
-
-          soundic[esound[idx]].play();
-          document.getElementById("pop-info").style.zIndex="4"
-        }
-        document.getElementById("pop-info").style.top="5vmin";
-        document.getElementById("pop-info").classList.remove("hidden");
-        document.getElementById("pop-info").classList.remove("fade");
-        document.getElementById("pop-info").classList.add("show");
-        document.getElementById("pop-info").style.backgroundColor=hexToHtmlColor(colorlst[colornum][3]);
-        document.getElementById("pop-info").style.opacity=0.7;
-        document.getElementById("popline1").style.color=hexToHtmlColor(colorlst[colornum][0]);
-        if(langnum==13||langnum==22||langnum==29||langnum==36){
-          document.getElementById("popline1").children[0].innerText=t3;
-          document.getElementById("popline1").children[1].innerText=t2;
-          document.getElementById("popline1").children[2].innerText=t1;
-        }else{
-          document.getElementById("popline1").children[0].innerText=t1;
-          document.getElementById("popline1").children[1].innerText=t2;
-          document.getElementById("popline1").children[2].innerText=t3;
-        }
-
-        setTimeout(function() {
-          document.getElementById("pop-info").style.top="-10vmin";
-          document.getElementById("pop-info").style.zIndex="2"
-
-        }, 2000);
-
+      function showpop(t1="",t2="",t3="",idx=0){
+        if(스샷||(gameoverflag&&idx!==-1)||restartflag)return;
+        const popup=document.getElementById('pop-info');
+        popup.classList.remove('hidden','fade','show');
+        popup.style.zIndex=idx===-1?'13':'4';
+        popup.style.top='max(56px, 5vmin)';popup.style.opacity='0';
+        popup.style.transform='translateY(-18px)';
+        popup.style.backgroundColor=hexToHtmlColor(colorlst[colornum][3]);
+        const line=document.getElementById('popline1');line.style.color=hexToHtmlColor(colorlst[colornum][0]);
+        const texts=[13,22,29,36].includes(langnum)?[t3,t2,t1]:[t1,t2,t3];
+        [...line.children].forEach((child,i)=>child.textContent=texts[i]);
+        arcadeFeedback.popup={age:0};
+        if(idx>=0)arcadePlayCue(idx);
       }
 
       window.showpop=showpop;
@@ -18732,7 +18515,7 @@ function lboard() { /* Unavailable in the fully unlocked arcade edition. */ }
 
 arcadeInstallInput();
 window.BRIX_ARCADE=Object.freeze({
-  version:'2.1.1', move:arcadeMove, selectFloor:arcadeSelectFloor,
+  version:'2.3.1', move:arcadeMove, selectFloor:arcadeSelectFloor,
   pause:arcadeSetPause,
   getState:()=>({ready:goahead,started:startflag,gameover:gameoverflag,mode:gamemod,floor:activeFloor,floors:cubes.length,score:점수,maxTile:maxnum,skin:skinset[skinnum],skins:paidskin.slice(),tracks:namelst.length,paused:arcadePaused(),journey:gamemod===0?arcadeJourneyState():null,render:renderer.info.memory})
 });
