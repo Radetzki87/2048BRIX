@@ -2377,11 +2377,9 @@ body>canvas{touch-action:none;top:0;left:0;width:100%!important;height:100%!impo
 #song-title{font-size:clamp(12px,1.8vmax,24px);}
 #artist-name{font-size:clamp(10px,1.3vmax,18px);}
 #pop-info{left:50%;margin-left:-35vmin;padding:0;width:70vmin;}
-#gameover-overlay.show{animation:arcade-result-fade 180ms ease-out both;}
-#gameover-overlay.show .gameover-container{animation:arcade-result-rise 220ms cubic-bezier(.2,.8,.2,1) both;}
+#gameover-overlay.show{animation:arcade-result-fade 100ms ease-out both;}
 @keyframes arcade-result-fade{from{opacity:0}to{opacity:1}}
-@keyframes arcade-result-rise{from{transform:translateY(10px) scale(.985)}to{transform:translateY(0) scale(1)}}
-@media(prefers-reduced-motion:reduce){#gameover-overlay.show,#gameover-overlay.show .gameover-container{animation:none;}#song-info,#pop-info{transform:none!important;}}
+@media(prefers-reduced-motion:reduce){#gameover-overlay.show{animation:none;}#song-info,#pop-info{transform:none!important;}}
 </style>
 <script>
 window.BrixBoot={failed:false,started:false,message:'',fail(message){this.failed=true;this.message=message;const box=document.getElementById('arcade-load');if(!box)return;box.hidden=false;document.getElementById('arcade-load-detail').textContent=message;document.getElementById('arcade-reload').hidden=false;},ready(){if(this.failed)return;this.started=true;clearTimeout(this.timeout);document.getElementById('arcade-load').hidden=true;}};
@@ -2748,7 +2746,7 @@ function arcadeDisposeTile(tile){
 function arcadeCreateMirror(value,r,c){
   const tile=tilemold[0].clone();
   tile.children.slice().forEach(child=>tile.remove(child));
-  tile.material=arcadeTileMaterial({color:getColorForNumber(value)});
+  tile.material=new THREE.MeshLambertMaterial({color:getColorForNumber(value)});
   const number=arcadeNumberText(value);number.material=new THREE.MeshBasicMaterial({color:0xffffff});
   number.scale.x=String(value).length>=3?Math.max(0.22,0.8-(String(value).length-3)/5):1;
   tile.add(number);tile.position.set(-bw/2+tw/2+c*tw,0,-bw/2+tw/2+r*tw);
@@ -2838,11 +2836,12 @@ function arcadeNormalForce(value,floor){
 }
 function arcadeJourneyVisuals(){
   if(restartflag)return;
-  const closed=!startflag||(gameoverflag&&!arcadeHoldingBoard())||activeFloor===cubes.length;
+  const floor=arcadeDisplayFloor();
+  const closed=!startflag||(gameoverflag&&!arcadeHoldingBoard())||floor===cubes.length;
   cubes.forEach((cube,index)=>cube.mesh.children.forEach(part=>{
     const tag=part.userData.skin;
     if(tag==='tile'||tag==='bottom'){
-      const visible=!closed&&index===activeFloor;
+      const visible=!closed&&index===floor;
       // Object visibility prevents later legacy camera/material updates from revealing hidden tiles.
       part.visible=visible;
       if(tag==='tile')part.traverse(node=>{if(!node.material)return;node.material.visible=visible;node.material.opacity=1;node.material.transparent=false;node.material.alphaTest=0;node.material.depthWrite=true;});
@@ -2853,12 +2852,14 @@ function arcadeJourneyVisuals(){
   }));
 }
 function arcadeJourneyBoardView(){
-  if(gamemod!==0||!startflag||(gameoverflag&&!arcadeHoldingBoard())||restartflag)return;
+  if(!startflag||(gameoverflag&&!arcadeHoldingBoard())||restartflag)return;
   // Secondary cameras show the playable board alone, without projected mirrors.
   cubes.forEach((cube,index)=>cube.mesh.children.forEach(tile=>{
-    if(tile.userData.skin!=='tile')return;
+    if(!['tile','bottom'].includes(tile.userData.skin))return;
     tile.visible=index===activeFloor;
-    tile.traverse(node=>{if(!node.material)return;node.material.visible=index===activeFloor;if(index===activeFloor){node.material.opacity=1;node.material.transparent=false;node.material.alphaTest=0;node.material.depthWrite=true;}});
+    if(tile.userData.skin==='tile'||tile.userData.skintype!==9){
+      tile.traverse(node=>{if(!node.material)return;node.material.visible=index===activeFloor;if(index===activeFloor){node.material.opacity=1;node.material.transparent=false;node.material.alphaTest=0;node.material.depthWrite=true;}});
+    }
   }));
 }
 function arcadeJourneyHUD(){
@@ -2879,72 +2880,9 @@ function arcadeJourneyHUD(){
 }
 function arcadeJourneyState(){return {route:ARCADE_ROUTE.map(f=>f+1),progress:arcadeJourney.progress,goal:ARCADE_GATE,nextFloor:ARCADE_ROUTE[(arcadeJourney.routeIndex+1)%ARCADE_ROUTE.length]+1,transfers:arcadeJourney.transfers,transitioning:arcadeJourney.transitionMs>0,endReason:arcadeJourney.endReason};}
 
-// Arcade 2.2: presentation only. No game state, physics, input or clock writes.
-// Reuse the original two light objects and one material per tile: their UUID
-// construction must not introduce extra calls to the gameplay random stream.
-function arcadeTileMaterial(parameters){
-  return lighton?new THREE.MeshPhongMaterial({...parameters,specular:0x242833,shininess:42}):new THREE.MeshBasicMaterial(parameters);
-}
-function arcadeStudioLight(light){
-  light.color.setHex(0xfff4e5);
-  light.intensity=0.86;
-  light.shadow.bias=-0.00015;
-  light.shadow.normalBias=0.025;
-  const size=resinit<3?1024:2048;
-  light.shadow.mapSize.set(size,size);
-  light.userData.arcadeStudio=true;
-  arcadeFitStudioShadow(light);
-}
-function arcadeFitStudioShadow(light){
-  const count=cubes.length,mode=gamemod;
-  if(light.userData.arcadeFloors===count&&light.userData.arcadeMode===mode)return;
-  light.userData.arcadeFloors=count;light.userData.arcadeMode=mode;
-  const height=bh*Math.max(5,count-(mode===2?3:0));
-  const center=height*0.45,extent=Math.max(bw*2.2,height*0.8);
-  light.position.set(-bw*2.5,center+bh*20,bw*4);
-  light.target.position.set(0,center,0);
-  light.target.updateMatrixWorld();
-  const camera=light.shadow.camera;
-  camera.left=-extent;camera.right=extent;camera.top=extent;camera.bottom=-extent;
-  camera.near=0.5;camera.far=Math.max(200,height*4);
-  camera.updateProjectionMatrix();
-}
-function arcadeGraphicsFrame(){
-  for(const light of scene.children)if(light.userData.arcadeStudio)arcadeFitStudioShadow(light);
-  for(const cube of cubes)for(const tile of cube.mesh.children){
-    if(tile.userData.skin!=='tile')continue;
-    const material=tile.material,color=material.color;
-    if(!color)continue;
-    // Restore the original white numerals while retaining the improved text fit.
-    const ink=0xffffff;
-    for(const number of tile.children){
-      if(!number.geometry||!number.material?.color)continue;
-      if(number.material.color.getHex()!==ink)number.material.color.setHex(ink);
-      number.material.toneMapped=false;
-      const geometry=number.geometry;
-      if(!geometry.boundingBox)geometry.computeBoundingBox();
-      const width=geometry.boundingBox.max.x-geometry.boundingBox.min.x;
-      if(width>0)number.scale.x=Math.min(1,tw*0.77/width);
-    }
-  }
-}
-// The top view is a reading surface. Reuse the main shadow map but suppress its
-// projected tower shadows for this pass, restoring all shared mesh flags after it.
-function arcadeBeginBoardLighting(){
-  const receives=[];
-  for(const cube of cubes)cube.mesh.traverse(node=>{if(node.receiveShadow){receives.push(node);node.receiveShadow=false;}});
-  const autoUpdate=renderer.shadowMap.autoUpdate;
-  renderer.shadowMap.autoUpdate=false;
-  return {receives,autoUpdate};
-}
-function arcadeEndBoardLighting(state){
-  state.receives.forEach(node=>{node.receiveShadow=true;});
-  renderer.shadowMap.autoUpdate=state.autoUpdate;
-}
-
 // Layout and picking use the same CSS-pixel viewport, independent of render resolution.
 // Feedback uses visible, unpaused time rather than uncancelled timeout callbacks.
-const arcadeResult={pending:false,board:false,remaining:0,lastFrame:0,shown:false};
+const arcadeResult={board:false,shown:false};
 const arcadeFeedback={lastFrame:0,song:null,popup:null,musicKey:''};
 function arcadeHoldingBoard(){return gameoverflag&&arcadeResult.board;}
 function arcadeHideFeedback(kind){
@@ -2954,7 +2892,8 @@ function arcadeHideFeedback(kind){
   element.style.opacity='0';element.style.transform='';
 }
 function arcadeResetResult(){
-  Object.assign(arcadeResult,{pending:false,board:false,remaining:0,lastFrame:0,shown:false});
+  Object.assign(arcadeResult,{board:false,shown:false});
+  for(const cube of cubes)cube.mesh.userData.game2048.arcadeFullFeedback=false;
   arcadeHideFeedback('song');arcadeHideFeedback('popup');
   arcadeFeedback.musicKey='';arcadeFeedback.lastFrame=performance.now();
 }
@@ -2971,7 +2910,7 @@ function arcadeFullFeedback(game,terminal=false){
   for(const tile of cubes[game.index].mesh.children){
     if(tile.userData.skin!=='tile')continue;
     const value=Number(tile.userData.text);
-    tile.material.color.set(`hsl(${base.h+Math.log2(value)*8}, ${base.s}%, ${base.l}%)`);
+    tile.material.color.set(`hsl(${((base.h+Math.log2(value)*8)%360+360)%360}, ${base.s}%, ${base.l}%)`);
     if(terminal)tile.scale.set(1,gap,1);
   }
   if(game.arcadeFullFeedback)return;
@@ -2984,7 +2923,7 @@ function arcadeQueueResult(){
   const game=cubes[activeFloor]?.mesh.userData.game2048;
   const fallen=!overblock&&cubes.some((cube,i)=>i>3&&cube.mesh.position.y<(gamemod===2?bh*(i-4):bh*4)+bh/5);
   const hold=!!game&&!fallen&&(fullmax||(gamemod===2&&fulltower))&&!arcadeHasMoves(game.board);
-  Object.assign(arcadeResult,{board:hold,shown:true,lastFrame:performance.now()});
+  Object.assign(arcadeResult,{board:hold,shown:true});
   if(gamemod===0)arcadeJourney.endReason=hold?'board':'tower';
   arcadeHideFeedback('song');
   if(hold){arcadeFullFeedback(game,true);bf=99;}
@@ -2999,15 +2938,8 @@ function arcadeQueueResult(){
   overlay.classList.remove('fade','hidden');overlay.classList.add('show');
   arcadePlayCue(4);
 }
-function arcadeSwitchFloorMusic(floor,announce=true){
-  if(!startflag||gameoverflag||restartflag||arcadePaused())return;
-  const song=sdic[floor];if(!song)return;
-  const file=song[0],key=floor+':'+file;
-  for(const other of songlst)if(other!==file&&soundic[other]?.isPlaying)soundic[other].stop();
-  const sound=soundic[file];
-  if(sound){sound.setLoop(true);sound.setVolume(배경음?0.4:0);if(!sound.isPlaying)sound.play();}
-  if(!announce||arcadeFeedback.musicKey===key)return;
-  arcadeFeedback.musicKey=key;fullguide=0;
+function arcadeShowSongInfo(info){
+  const {song,floor}=info;
   songTitleElement.textContent=song.title||'';artistNameElement.textContent=song.producer||'';
   const floorColor=colorlst0[colornum0][floor%5];
   for(let i=1;i<=3;i++)document.getElementById('songback'+i).style.backgroundColor=hexToHtmlColor(colorlst[colornum][i]);
@@ -3020,8 +2952,24 @@ function arcadeSwitchFloorMusic(floor,announce=true){
   const element=document.getElementById('song-info');
   element.classList.remove('hidden','fade','show','show1','moveleft');
   element.style.left='0px';element.style.zIndex='4';element.style.opacity='0';
-  element.style.transform='translateX(-12px)';
-  arcadeFeedback.song={age:0};
+  element.style.transform='';
+  arcadeFeedback.song={age:0,next:null};
+}
+function arcadeSwitchFloorMusic(floor,announce=true){
+  if(!startflag||gameoverflag||restartflag||arcadePaused())return;
+  const song=sdic[floor];if(!song)return;
+  const file=song[0],key=floor+':'+file;
+  for(const other of songlst)if(other!==file&&soundic[other]?.isPlaying)soundic[other].stop();
+  const sound=soundic[file];
+  if(sound){sound.setLoop(true);sound.setVolume(배경음?0.4:0);if(!sound.isPlaying)sound.play();}
+  if(!announce||arcadeFeedback.musicKey===key)return;
+  arcadeFeedback.musicKey=key;fullguide=0;
+  const previous=arcadeFeedback.song,info={song,floor};
+  if(previous){
+    // A second handoff during fade-out replaces the pending title, not its clock.
+    if(!previous.next){previous.exitAge=0;previous.exitOpacity=Number(document.getElementById('song-info').style.opacity)||0;}
+    previous.next=info;
+  }else arcadeShowSongInfo(info);
 }
 function arcadeResultFrame(now){
   const delta=arcadeFeedback.lastFrame?Math.max(0,now-arcadeFeedback.lastFrame):0;
@@ -3031,13 +2979,21 @@ function arcadeResultFrame(now){
   const smooth=value=>{const t=Math.max(0,Math.min(1,value));return t*t*(3-2*t);};
   for(const kind of ['song','popup']){
     const state=arcadeFeedback[kind];if(!state)continue;
+    const song=kind==='song',element=document.getElementById(song?'song-info':'pop-info');
+    if(song&&state.next){
+      state.exitAge+=delta;
+      if(state.exitAge>=120){arcadeShowSongInfo(state.next);continue;}
+      element.style.opacity=String(state.exitOpacity*(1-smooth(state.exitAge/120)));
+      continue;
+    }
     state.age+=delta;
-    const song=kind==='song',end=song?2500:2400,fadeIn=song?300:200,fadeOut=song?300:400;
+    // Original music strip: 0.4 s in, fade-out at 2.2 s, gone at 2.5 s.
+    // Completion toast: hold until 2 s, then slide/fade up for 0.4 s.
+    const end=song?2500:2400,fadeIn=song?400:200,fadeOut=song?300:400;
     if(state.age>=end){arcadeHideFeedback(kind);continue;}
     const alpha=smooth(Math.min(state.age/fadeIn,(end-state.age)/fadeOut));
-    const element=document.getElementById(song?'song-info':'pop-info');
     element.style.opacity=String(alpha*(song?1:0.7));
-    element.style.transform=song?`translateX(${(state.age<fadeIn?-12:12)*(1-alpha)}px)`:`translateY(${-18*(1-alpha)}px)`;
+    element.style.transform=song?'':state.age<fadeIn?`translateY(${-18*(1-alpha)}px)`:`translateY(${-15*(1-alpha)}vmin)`;
   }
 }
 function arcadeShowBoardView(){return topcam&&originflag&&startflag&&(!gameoverflag||arcadeHoldingBoard())&&!restartflag&&!fullcam;}
@@ -3071,24 +3027,28 @@ function arcadeSetMainViewport(){
   const v=arcadeViewLayout().main;renderer.setViewport(v.x,v.y,v.size,v.size);
 }
 function arcadeFinishMainViewport(){if(gradback[0])gradback[0].visible=true;if(arcadeGroundOriginal)groundmesh.material=arcadeGroundOriginal;groundmesh.visible=arcadeGroundVisible;renderer.autoClear=true;}
-function arcadeTowerHit(event){
+function arcadeTowerFloorAt(event){
   const point=event.touches[0],rect=renderer.domElement.getBoundingClientRect(),v=arcadeViewLayout().main;
   const x=(point.clientX-rect.left)*window.innerWidth/rect.width;
   const y=(point.clientY-rect.top)*window.innerHeight/rect.height;
+  const board=arcadeViewLayout().board,boardTop=innerHeight-board.y-board.size;
+  // The visible 2D board has priority over the oversized main viewport behind it.
+  if(arcadeShowBoardView()&&x>=board.x&&x<=board.x+board.size&&y>=boardTop&&y<=boardTop+board.size)return -1;
   const top=window.innerHeight-v.y-v.size;
   핑거.x=(x-v.x)/v.size*2-1;핑거.y=1-(y-top)/v.size*2;
   camera.updateMatrixWorld();cubes.forEach(c=>c.mesh.updateMatrixWorld());
   raycaster.setFromCamera(핑거,camera);
-  return raycaster.intersectObjects(cubes.map(c=>c.mesh),false).length>0;
+  const hit=raycaster.intersectObjects(cubes.map(c=>c.mesh),false)[0];
+  return hit?cubes.findIndex(c=>c.mesh===hit.object):-1;
 }
+function arcadeTowerHit(event){return arcadeTowerFloorAt(event)>=0;}
 function arcadeRenderBoard(){
   const v=arcadeViewLayout().board;
   renderer.setViewport(v.x,v.y,v.size,v.size);renderer.setScissor(v.x,v.y,v.size,v.size);renderer.setScissorTest(true);
   const background=gradback[0],groundVisible=groundmesh.visible;if(background)background.visible=false;groundmesh.visible=false;
   renderer.autoClear=false;renderer.clearDepth();
   arcadeJourneyBoardView();
-  const lighting=arcadeBeginBoardLighting();
-  try{renderer.render(scene,topViewCamera);}finally{arcadeEndBoardLighting(lighting);}
+  renderer.render(scene,topViewCamera);
   renderer.autoClear=true;if(background)background.visible=true;groundmesh.visible=groundVisible;
 }
 let arcadePresentationKey='';
@@ -3112,6 +3072,9 @@ let arcadeProfileInitialized = false;
 let arcadeManualPause = false;
 let arcadeWasPaused = false;
 let arcadePointerId = null;
+// Inspection owns its pointer, but never changes the playable floor or music.
+let arcadeTowerPreview = null;
+function arcadeDisplayFloor(){return arcadeTowerPreview?.floor ?? activeFloor;}
 let arcadeHudKey = '';
 let arcadeRunToken = 0;
 let arcadeAssetsPending = 0;
@@ -3166,7 +3129,7 @@ function arcadeRefreshUI() {
   set('arcade-help-button', ko?'조작법':'HELP');
   set('arcade-fullscreen', ko?'전체화면':'FULLSCREEN');
   const rules=gamemod===0?(ko?'기본: 하나의 보드로 5→4→3→2→1→2→3→4→5층을 순환합니다.\n합치기 +1칸 · 두 쌍 이상 +2칸 · 10칸이면 즉시 다음 층.\n층은 자동으로 바뀌며, 이동할 수 없거나 타워가 무너지면 종료됩니다.':'NORMAL: One board travels 5→4→3→2→1→2→3→4→5.\nMerge +1 · multiple pairs +2 · 10 segments moves to the next floor.\nNo moves or a fallen tower ends the run.'):(gamemod===1?(ko?'하드: 기존 기본 모드입니다. 층마다 별도 보드가 있습니다.\n타워의 층을 누르거나 1–5키로 선택 · 0키: 전체 보기':'HARD: Original NORMAL rules, with a separate board on each floor.\nTap a floor or use 1–5 to select · 0: tower view'):(ko?'스택: 맨 위층에서 목표 숫자를 합쳐 타워를 높이세요.':'STACK: Merge the target tile on the top floor to build higher.'));
-  set('arcade-help',rules+(ko?'\n\n쓸어 넘기기 / 방향키 / WASD: 이동\nEnter: 시작 · R: 재시작 · P: 일시정지 · Esc: 메뉴 닫기':'\n\nSwipe / arrows / WASD: move\nEnter: start · R: restart · P: pause · Esc: close menu'));
+  set('arcade-help',rules+(ko?'\n\n타일판 쓸어 넘기기 / 방향키 / WASD: 이동\n타워를 누른 채 위아래: 층 내부 보기 · 놓으면 복귀\nEnter: 시작 · R: 재시작 · P: 일시정지 · Esc: 메뉴 닫기':'\n\nBoard swipe / arrows / WASD: move\nHold tower + drag up/down: inspect floors · release to return\nEnter: start · R: restart · P: pause · Esc: close menu'));
   ['mod0','mod1','mod2'].forEach((id,i)=>{const labels=document.querySelectorAll('#'+id+' label');if(labels[0])labels[0].textContent=(ko?['기본 · 순환 보드','하드 · 층별 보드','스택']:['NORMAL · JOURNEY','HARD · CLASSIC','STACK'])[i];});
   arcadeJourney.hudKey='';arcadeJourneyHUD();
   document.querySelectorAll('.gameover .glabel0').forEach((e,i)=>e.textContent=i===0?(ko?'다시 플레이':'PLAY AGAIN'):(ko?'일반 모드':'NORMAL MODE'));
@@ -3285,15 +3248,38 @@ function arcadeOverlayOpen() {
 }
 function arcadePaused() {return document.hidden || arcadeManualPause || (startflag && !restartflag && arcadeOverlayOpen());}
 function arcadeSetPause(value) {
+  if(value)arcadeResetPointer();
   arcadeManualPause=!!value;
   document.getElementById('arcade-paused')?.classList.toggle('is-visible',arcadeManualPause);
   if(arcadeManualPause) listener?.context?.suspend().catch(()=>{}); else arcadeResumeAudio();
   arcadeRefreshUI();
 }
-function arcadeResetPointer() {arcadePointerId=null;ontouch=false;dragflag=false;bufflag=true;}
+function arcadeResetPointer() {
+  const pointer=arcadePointerId;
+  arcadePointerId=null;ontouch=false;dragflag=false;bufflag=true;
+  if(arcadeTowerPreview){arcadeTowerPreview=null;bf=99;}
+  if(pointer!==null&&renderer.domElement.hasPointerCapture(pointer))renderer.domElement.releasePointerCapture(pointer);
+}
+function arcadeBeginTowerPreview(e){
+  if(!startflag||!originflag||!goahead||!터치||gameoverflag||restartflag||rotationflag)return false;
+  const floor=arcadeTowerFloorAt(arcadeSyntheticTouch(e.clientX,e.clientY));
+  if(floor<0)return false;
+  arcadeTowerPreview={floor,firstFloor:floor,x:e.clientX,y:e.clientY,moved:false,
+    step:Math.max(32,Math.min(80,Math.min(innerWidth,innerHeight)*0.10))};
+  ontouch=false;dragflag=false;bf=99;
+  renderer.domElement.setPointerCapture(e.pointerId);
+  return true;
+}
+function arcadeMoveTowerPreview(e){
+  const view=arcadeTowerPreview;if(!view)return;
+  const dy=view.y-e.clientY;
+  if(Math.hypot(e.clientX-view.x,dy)>10)view.moved=true;
+  const floor=Math.max(0,Math.min(cubes.length-1,view.firstFloor+Math.trunc(dy/view.step)));
+  if(floor!==view.floor){view.floor=floor;bf=99;}
+}
 function arcadeSyntheticTouch(x,y) {return {touches:[{clientX:x,clientY:y}],preventDefault(){},stopPropagation(){}};}
 function arcadeSelectFloor(index) {
-  if(!goahead || !터치 || restartflag || gameoverflag || ftiles.length || arcadeJourney.transitionMs || arcadePaused())return false;
+  if(arcadeTowerPreview || !goahead || !터치 || restartflag || gameoverflag || ftiles.length || arcadeJourney.transitionMs || arcadePaused())return false;
   if(gamemod===0&&startflag)return false;
   if(!originflag){handleTouchStart(arcadeSyntheticTouch(0,0));return false;}
   if(Math.abs(camera.rotation.x+isoAngle)>0.0001)return false;
@@ -3310,7 +3296,7 @@ function arcadeSelectFloor(index) {
   return true;
 }
 function arcadeMove(direction) {
-  if(!['up','down','left','right'].includes(direction) || !startflag || !originflag || gameoverflag || restartflag || aniflag || ftiles.length || arcadeJourney.transitionMs || playlock || m2flag || arcadePaused())return false;
+  if(arcadeTowerPreview || !['up','down','left','right'].includes(direction) || !startflag || !originflag || gameoverflag || restartflag || aniflag || ftiles.length || arcadeJourney.transitionMs || playlock || m2flag || arcadePaused())return false;
   const floor=gamemod===2?cubes.length-1:activeFloor;
   const game=cubes[floor]?.mesh.userData.game2048;
   if(!game || game.fullflag)return false;
@@ -3323,15 +3309,25 @@ function arcadeInstallInput() {
     if(e.button!==0 || !e.isPrimary || interactive(e) || arcadePaused() || arcadePointerId!==null)return;
     arcadePointerId=e.pointerId;
     if(e.cancelable)e.preventDefault();
-    handleTouchStart(arcadeSyntheticTouch(e.clientX,e.clientY));
+    if(!arcadeBeginTowerPreview(e))handleTouchStart(arcadeSyntheticTouch(e.clientX,e.clientY));
   },{passive:false});
   window.addEventListener('pointermove',e=>{
     if(e.pointerId!==arcadePointerId || arcadePaused())return;
     if(e.cancelable)e.preventDefault();
-    handleTouchMove(arcadeSyntheticTouch(e.clientX,e.clientY));
+    if(arcadeTowerPreview)arcadeMoveTowerPreview(e);
+    else handleTouchMove(arcadeSyntheticTouch(e.clientX,e.clientY));
   },{passive:false});
-  window.addEventListener('pointerup',e=>{if(e.pointerId===arcadePointerId){handleTouchEnd(e);arcadeResetPointer();}});
-  window.addEventListener('pointercancel',arcadeResetPointer);
+  window.addEventListener('pointerup',e=>{
+    if(e.pointerId!==arcadePointerId)return;
+    const view=arcadeTowerPreview;
+    if(view)arcadeMoveTowerPreview(e);else handleTouchEnd(e);
+    arcadeResetPointer();
+    // HARD still supports a stationary tap to select a playable floor.
+    // Any drag is inspection only, even when it returns to its starting point.
+    if(view&&!view.moved&&gamemod===1)arcadeSelectFloor(view.firstFloor);
+  });
+  window.addEventListener('pointercancel',e=>{if(e.pointerId===arcadePointerId)arcadeResetPointer();});
+  renderer.domElement.addEventListener('lostpointercapture',e=>{if(e.pointerId===arcadePointerId)arcadeResetPointer();});
   window.addEventListener('blur',arcadeResetPointer);
   document.addEventListener('visibilitychange',()=>{
     arcadeResetPointer();lastTime=0;
@@ -3408,19 +3404,29 @@ function arcadeChooseMusic(){
     sdic=Array.from({length:6},(_,i)=>nslst[pool[i%pool.length]]);
   }
 }
+// Apply a theme skin only when its PLAY action is committed. Plain restarts and
+// music assignment never overwrite a later choice made with the skin arrows.
+const ARCADE_THEME_SKINS=Object.freeze({wooden:'base',lofi:'lofi',retro:'gb','808':'r808',hiphop:'hiphop'});
 function arcadePlaySelection(){
   if(restartflag||rotationflag||!goahead||!originflag)return false;
   const code=document.getElementById('pbt').children[2].textContent.trim();
-  let next;
+  let next,themeSkin=null;
   if(code.startsWith('9#')){
     next=code.slice(2);const parts=next.split('%');
     if(!/^[1-5][01]$/.test(parts[0])||parts.slice(1).some(name=>!namelst.includes(name)))return false;
+    themeSkin=ARCADE_THEME_SKINS[themelst[Number(parts[0][0])-1]];
   }else if(code.startsWith('2 ')){
     const name=code.slice(2);if(!namelst.includes(name))return false;
     next=String(themelst.indexOf(nslst[name].type)+1)+'0%'+name;
   }else return false;
+  const previousCode=playcode,previousSkin=skinnum;
   playcode=next;
-  return arcadeRestart(gamemod);
+  if(themeSkin)skingo(skinset.indexOf(themeSkin));
+  // RETRO's original Game Boy skin is supported in NORMAL and HARD only.
+  const mode=gamemod===2&&themeSkin==='gb'?0:gamemod;
+  if(!arcadeRestart(mode)){playcode=previousCode;skingo(previousSkin);return false;}
+  skinshift(3);
+  return true;
 }
 function arcadePreviewSong(){
   if(arcadeManualPause||document.hidden)return;
@@ -4623,7 +4629,7 @@ function arcadeResumeGameMusic(){
                   let ntile;
                   if (this.board[position.row][position.col] == 2) {
                       ntile = tilemold[0].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(2)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4631,7 +4637,7 @@ function arcadeResumeGameMusic(){
                       });
                   } else if(this.board[position.row][position.col] == 4) {
                       ntile = tilemold[1].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(4)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4639,7 +4645,7 @@ function arcadeResumeGameMusic(){
                       });
                   } else if(this.board[position.row][position.col] == 8) {
                       ntile = tilemold[2].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(8)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4647,7 +4653,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 16) {
                       ntile = tilemold[3].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(16)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4655,7 +4661,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 32) {
                       ntile = tilemold[4].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(32)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4663,7 +4669,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 64) {
                       ntile = tilemold[5].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(64)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4671,7 +4677,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 128) {
                       ntile = tilemold[6].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(128)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4679,7 +4685,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 256) {
                       ntile = tilemold[7].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(256)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4687,7 +4693,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 512) {
                       ntile = tilemold[8].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(512)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4695,7 +4701,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 1024) {
                       ntile = tilemold[9].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(1024)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -4703,7 +4709,7 @@ function arcadeResumeGameMusic(){
                       });
                   }else if(this.board[position.row][position.col] == 2048) {
                       ntile = tilemold[10].clone();
-                      ntile.material = arcadeTileMaterial({
+                      ntile.material = new THREE.MeshLambertMaterial({
                           color: getColorForNumber(2048)
                       });
                       ntile.children[0].material = new THREE.MeshBasicMaterial({
@@ -5322,8 +5328,6 @@ function arcadeResumeGameMusic(){
       // var shadowMapRenderer = new THREE.WebGLShadowMapRenderer(renderer);
       // shadowMapRenderer.render(scene, dl);
       if (shadowon) renderer.shadowMap.enabled = true;
-      renderer.outputColorSpace=THREE.SRGBColorSpace;
-      renderer.shadowMap.type=THREE.PCFSoftShadowMap;
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
       var world = new CANNON.World();
@@ -5726,7 +5730,7 @@ if(gamemod===2 && [7,8].includes(skinnum))skinnum=0;
                   }
                   txtsetting(function(object) {
                       if (lighton) {
-                          var ambientLight = new THREE.HemisphereLight(0xf1f6ff, 0x776453, 0.36);
+                          var ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
                           scene.add(ambientLight);
                           // const dL=new THREE.DirectionalLight(0xffffff,0.7);
                           // dL.position.set(13,30,18);
@@ -5771,7 +5775,6 @@ if(gamemod===2 && [7,8].includes(skinnum))skinnum=0;
                               }
 
                           }
-                          arcadeStudioLight(dl2);
                                   scene.add(dl2)
                       }
                       time0 = performance.now();
@@ -9891,6 +9894,7 @@ function msetting1(callback) { msetting0(callback); }
           stackHeight = n;
           cubes.forEach((item) => {
               item.mesh.userData["game2048"].fullflag=false;
+              item.mesh.userData["game2048"].arcadeFullFeedback=false;
               item.mesh.material.visible = false
               item.mesh.material.opacity = 1
               item.mesh.material.transparent = false;
@@ -10033,7 +10037,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
 
       function createTile(idx, height, size, number = 0, callback) {
           if (lighton) {
-              var material = arcadeTileMaterial({
+              var material = new THREE.MeshLambertMaterial({
                   color: getColorForNumber(number)
               });
           } else {
@@ -10342,7 +10346,7 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
                         msetting0(function(object) {
                             txtsetting(function(object) {
                                 if (lighton) {
-                                  var ambientLight = new THREE.HemisphereLight(0xf1f6ff, 0x776453, 0.36);
+                                  var ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
                                   scene.add(ambientLight);
                                   // const dL=new THREE.DirectionalLight(0xffffff,0.7);
                                   // dL.position.set(13,30,18);
@@ -10387,7 +10391,6 @@ if(callback){if(n===0)arcadeWaitForModels().then(callback).catch(error=>window.B
                                       }
 
                                   }
-                                  arcadeStudioLight(dl2);
                                   scene.add(dl2)
                               }
                                 time0 = performance.now();
@@ -12650,7 +12653,9 @@ var mnum=Math.min(2048,num);
                 cubes[cubes.length-1].mesh.scale.set(1,gap,1)
                 if(cubes.length>=7){
                   for (var j = cubes[cubes.length-2].mesh.children.length - 1; j >= 0; j--) {
-                      if (cubes[cubes.length-2].mesh.children[j].userData["skin"] != skinset[skinnum]) {
+                      // Keep completed boards available for hold-to-inspect. Their
+                      // visibility is controlled by the main/board camera passes.
+                      if (!['tile','bottom',skinset[skinnum]].includes(cubes[cubes.length-2].mesh.children[j].userData["skin"])) {
                         if(cubes[cubes.length-2].mesh.children[j].userData["skin"]!="text1"&&cubes[cubes.length-2].mesh.children[j].userData["skin"]!="face"&&cubes[cubes.length-2].mesh.children[j].userData["skin"].substring(0, cubes[cubes.length-2].mesh.children[j].userData["skin"].length - 1) != "txtback") cubes[cubes.length-2].mesh.remove(cubes[cubes.length-2].mesh.children[j]);
                       }
                   }
@@ -13597,9 +13602,10 @@ var mnum=Math.min(2048,num);
             item.material.visible=false;
           });
 
-          if (orthoflag && lookcenter&&bf!=activeFloor) {
+          const displayFloor=arcadeDisplayFloor();
+          if (orthoflag && lookcenter&&bf!=displayFloor) {
               if (!gameoverflag||arcadeHoldingBoard()) {
-                  if (activeFloor == cubes.length) {
+                  if (displayFloor == cubes.length) {
                       camera.position.set(
                           2*(bw * 2 )+ avx,
                           // cubes[cubes.length-1].mesh.position.y+bh*5,
@@ -13696,7 +13702,7 @@ var mnum=Math.min(2048,num);
                   } else {
                       for (var i = 0; i < cubes.length; i++) {
 
-                          if (i == activeFloor) {
+                          if (i == displayFloor) {
                               camera.position.set(
                                   2*(bw * 2 )+ avx,
                                   // cubes[cubes.length-1].mesh.position.y+(i-3)*bh,
@@ -13809,7 +13815,7 @@ var mnum=Math.min(2048,num);
 
                               });
                           } else {
-                              if (i > activeFloor) {
+                              if (i > displayFloor) {
                                   // cubes[i].mesh.material.opacity = 0.04;
                                   cubes[i].mesh.material.alphaTest = 0;
                                   cubes[i].mesh.material.transparent = true;
@@ -13828,14 +13834,14 @@ var mnum=Math.min(2048,num);
                                           tile.material.opacity = 1
                                           tile.material.transparent = false;
                                       } else if (tile.userData["skin"] == skinset[skinnum]) {
-                                          // if(activeFloor==3||(activeFloor<3&&i==4)){
+                                          // if(displayFloor==3||(displayFloor<3&&i==4)){
                                           //   tile.material.visible = true;
                                           //   tile.material.opacity = 0.12
                                           //   tile.material.alphaTest = 0.12
                                           //   tile.material.transparent = true;
                                           // }else{
                                           //   tile.material.visible = true;
-                                          //   tile.material.opacity = 0.04 + (i - activeFloor) * 0.015;
+                                          //   tile.material.opacity = 0.04 + (i - displayFloor) * 0.015;
                                           //   tile.material.alphaTest = tile.material.opacity
                                           //   tile.material.transparent = true;
                                           // }
@@ -13971,7 +13977,7 @@ var mnum=Math.min(2048,num);
                 })
             }
 
-            if(gamemod==2&&activeFloor==cubes.length){
+            if(gamemod==2&&displayFloor==cubes.length){
               // dl2.shadow.camera.position.y= bh * (cubes.length)
               cubes[cubes.length-2].mesh.children.forEach((tile, index) => {
                 if (tile.userData["skin"] == "tile") {
@@ -13985,7 +13991,7 @@ var mnum=Math.min(2048,num);
             if(skinset[skinnum]=="gb"){
               if(true){
                 for (var i = 0; i < cubes.length; i++) {
-                    if (i == activeFloor) {
+                    if (i == displayFloor) {
                         cubes[i].mesh.children.forEach((tile, index) => {
                             if(tile.userData["skintype"] == 9){
                               tile.material.visible = false;
@@ -14026,7 +14032,7 @@ var mnum=Math.min(2048,num);
                             }
                         });
                     } else {
-                        if (i > activeFloor) {
+                        if (i > displayFloor) {
                             cubes[i].mesh.children.forEach((tile) => {
                                 if (tile.userData["skin"] == "text1") {
                                     if (skinset[skinnum]=="gb") {
@@ -14055,14 +14061,14 @@ var mnum=Math.min(2048,num);
                                   tile.material.opacity = tmb0;
                                   // tile.material.alphaTest = tmb0;
                                   tile.material.transparent = true;
-                                  // if(activeFloor==3||(activeFloor<3&&i==4)){
+                                  // if(displayFloor==3||(displayFloor<3&&i==4)){
                                   //   tile.material.visible = true;
                                   //   tile.material.opacity = 0.12
                                   //   tile.material.alphaTest = 0.12
                                   //   tile.material.transparent = true;
                                   // }else{
                                   //   tile.material.visible = true;
-                                  //   tile.material.opacity = 0.04 + (i - activeFloor) * 0.015;
+                                  //   tile.material.opacity = 0.04 + (i - displayFloor) * 0.015;
                                   //   tile.material.alphaTest = tile.material.opacity
                                   //   tile.material.transparent = true;
                                   // }
@@ -14154,7 +14160,7 @@ var mnum=Math.min(2048,num);
                                 }else if(item.userData["skintype"]=="mouth2"){
                                   item.material.visible = true;
                                   item.material.color = new THREE.Color(0xFFA401);
-                                  if(i>=activeFloor){
+                                  if(i>=displayFloor){
                                       item.material.opacity = tmb1+0.05;
                                       item.material.alphaTest = tmb1+0.05;
                                       item.material.transparent = true;
@@ -14167,7 +14173,7 @@ var mnum=Math.min(2048,num);
                                 }else if(item.userData["skintype"]=="eye1"){
                                   item.material.visible = true;
                                   item.material.color = new THREE.Color(0xFFA401);
-                                  if(i>=activeFloor){
+                                  if(i>=displayFloor){
                                       item.material.opacity = tmb1+0.05;
                                       item.material.alphaTest = tmb1+0.05;
                                       item.material.transparent = true;
@@ -14184,7 +14190,7 @@ var mnum=Math.min(2048,num);
                               cubes[i].mesh.children.forEach((item) => {
                                 if(item.userData["skintype"]=="mouth1"){
                                   item.material.visible = true;
-                                  if(i>=activeFloor){
+                                  if(i>=displayFloor){
                                       item.material.opacity = tmb1+0.05;
                                       item.material.alphaTest = tmb1+0.05;
                                       item.material.transparent = true;
@@ -14199,7 +14205,7 @@ var mnum=Math.min(2048,num);
                                 }else if(item.userData["skintype"]=="eye1"){
                                   item.material.visible = true;
                                   item.material.color = new THREE.Color(0x00C85F);
-                                  if(i>=activeFloor){
+                                  if(i>=displayFloor){
                                       item.material.opacity = tmb1+0.05;
                                       item.material.alphaTest = tmb1+0.05;
                                       item.material.transparent = true;
@@ -14310,10 +14316,10 @@ var mnum=Math.min(2048,num);
                     cubes[i].mesh.children[j].material.receiveShadow = true;
                     cubes[i].mesh.children[j].material.castShadow = true;
 
-                    if(activeFloor==cubes.length){
+                    if(displayFloor==cubes.length){
                       cubes[i].mesh.children[j].material.depthWrite=true;
 
-                    }else if(i==activeFloor){
+                    }else if(i==displayFloor){
                       // console.log(" visible:"+String(tile.material.visible)+" opacity:"+String(tile.material.opacity)+" alphatest:"+String(tile.material.alphaTest)+" transparent:"+String(tile.material.transparent))
                       if(skinset[skinnum]=="classic"){//클
                         cubes[i].mesh.children[j].material.visible = true;
@@ -14329,7 +14335,7 @@ var mnum=Math.min(2048,num);
                         cubes[i].mesh.children[j].material.transparent = true;
                         cubes[i].mesh.children[j].material.depthWrite=false;
                       }
-                    }else if(i<activeFloor){
+                    }else if(i<displayFloor){
 
                       if(skinset[skinnum]=="classic"){//클
                         cubes[i].mesh.children[j].material.visible = true;
@@ -14344,7 +14350,7 @@ var mnum=Math.min(2048,num);
 
 
 
-                    }else if(i>activeFloor){
+                    }else if(i>displayFloor){
                       cubes[i].mesh.children[j].material.alphaToCoverage= false;
 
                       cubes[i].mesh.children[j].material.visible = true;
@@ -14355,9 +14361,9 @@ var mnum=Math.min(2048,num);
                       cubes[i].mesh.children[j].material.depthWrite=false;
                     }
                   }else if(cubes[i].mesh.children[j].userData["skin"]=="bottom"){
-                    if(activeFloor==cubes.length){
+                    if(displayFloor==cubes.length){
 
-                    }else if(i>activeFloor){
+                    }else if(i>displayFloor){
 
                     }
                   }
@@ -14423,7 +14429,6 @@ var mnum=Math.min(2048,num);
 
 
           arcadeJourneyVisuals();
-          arcadeGraphicsFrame();
           if (window.innerWidth > window.innerHeight) {
               if (restartflag) {
                   arcadeSetMainViewport();
@@ -15041,7 +15046,7 @@ var mnum=Math.min(2048,num);
 
           }
           arcadeJourneyHUD();arcadePresentationHUD();
-          bf=activeFloor;
+          bf=arcadeTowerPreview?99:activeFloor;
           if (elapsedTime < 3 && !gameoverflag) {
 
           } else {
@@ -16489,6 +16494,7 @@ var mnum=Math.min(2048,num);
     }
 
       window.addEventListener("resize", () => {
+          arcadeResetPointer();
           const width = window.innerWidth;
           const height = window.innerHeight;
           renderer.setSize(width, height);
@@ -18567,9 +18573,9 @@ function lboard() { /* Unavailable in the fully unlocked arcade edition. */ }
 
 arcadeInstallInput();
 window.BRIX_ARCADE=Object.freeze({
-  version:'2.3.0', move:arcadeMove, selectFloor:arcadeSelectFloor,
+  version:'2.4.0', move:arcadeMove, selectFloor:arcadeSelectFloor,
   pause:arcadeSetPause,
-  getState:()=>({ready:goahead,started:startflag,gameover:gameoverflag,mode:gamemod,floor:activeFloor,floors:cubes.length,score:점수,maxTile:maxnum,skin:skinset[skinnum],skins:paidskin.slice(),tracks:namelst.length,paused:arcadePaused(),journey:gamemod===0?arcadeJourneyState():null,render:renderer.info.memory})
+  getState:()=>({ready:goahead,started:startflag,gameover:gameoverflag,mode:gamemod,floor:activeFloor,inspectingFloor:arcadeTowerPreview?.floor??null,floors:cubes.length,score:점수,maxTile:maxnum,skin:skinset[skinnum],skins:paidskin.slice(),tracks:namelst.length,paused:arcadePaused(),journey:gamemod===0?arcadeJourneyState():null,render:renderer.info.memory})
 });
 
 
@@ -19006,6 +19012,10 @@ function showshop() {
           var gridlst = document.querySelectorAll("#categ1 >.grid >div");
           var gbutton = document.querySelectorAll("#categ1 >h1")
           gbutton[0].innerText = themelang[n]
+          let modeNote=document.getElementById('arcade-theme-mode-note');
+          if(!modeNote){modeNote=document.createElement('p');modeNote.id='arcade-theme-mode-note';gbutton[0].after(modeNote);}
+          modeNote.hidden=!(gamemod===2&&n===2);
+          modeNote.textContent=langnum===1?'RETRO 스킨은 일반 모드로 시작합니다.':'The RETRO skin starts in NORMAL mode.';
 
 
           var gbuttonimg = document.querySelectorAll("#categ1 >img");
